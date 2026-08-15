@@ -5,6 +5,8 @@ import cors from 'cors';
 import { WebSocketMessage, WebSocketResponse, ChatMessage } from '../../shared/src/types/index.js';
 import { LlamaCppProvider } from './ai/providers/LlamaCppProvider.js';
 import { LLMMessage } from './ai/providers/LLMProvider.js';
+import { ADA_SYSTEM_PROMPT } from './ai/prompts/SystemPrompt.js';
+import { validateStructuredResponse } from '../../shared/src/schemas/emotion.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -30,7 +32,7 @@ wss.on('connection', (ws: WebSocket) => {
   const conversation: LLMMessage[] = [
     {
       role: 'system',
-      content: 'You are Ada, a friendly personal AI companion.'
+      content: ADA_SYSTEM_PROMPT
     }
   ];
 
@@ -52,16 +54,44 @@ wss.on('connection', (ws: WebSocket) => {
             messages: conversation
           });
 
+          let parsedResponse;
+          try {
+            const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+            const jsonString = jsonMatch ? jsonMatch[0] : response.content;
+            parsedResponse = JSON.parse(jsonString);
+          } catch (e) {
+            console.error('Failed to parse LLM response as JSON:', response.content);
+            parsedResponse = {
+              text: response.content,
+              emotion: 'neutral',
+              intensity: 0.0,
+              animation: 'neutral'
+            };
+          }
+
+          if (!validateStructuredResponse(parsedResponse)) {
+             console.warn('Invalid structured response, using fallback format');
+             if (typeof parsedResponse.text !== 'string') {
+                parsedResponse.text = response.content;
+             }
+             parsedResponse.emotion = 'neutral';
+             parsedResponse.intensity = 0.0;
+             parsedResponse.animation = 'neutral';
+          }
+
           conversation.push({
             role: 'assistant',
-            content: response.content
+            content: JSON.stringify(parsedResponse)
           });
 
           const responseMsg: ChatMessage = {
             id: Date.now().toString(),
             sender: 'ada',
-            text: response.content,
+            text: parsedResponse.text,
             timestamp: Date.now(),
+            emotion: parsedResponse.emotion,
+            intensity: parsedResponse.intensity,
+            animation: parsedResponse.animation
           };
 
           const wsResponse: WebSocketResponse = {

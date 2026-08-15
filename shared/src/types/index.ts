@@ -3,6 +3,9 @@ export interface ChatMessage {
   sender: 'user' | 'ada';
   text: string;
   timestamp: number;
+  emotion?: string;
+  intensity?: number;
+  animation?: string;
 }
 
 export interface WebSocketMessage {

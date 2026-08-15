@@ -3,13 +3,26 @@ import { AvatarController } from './AvatarController';
 import { VRMAvatarProps } from './avatarTypes';
 import './VRMAvatar.css';
 
-export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl }) => {
+export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensity, animation }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AvatarController | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [expressions, setExpressions] = useState<string[]>([]);
+
+  const emotionToExpressionMap: Record<string, string> = {
+    neutral: 'neutral',
+    happy: 'happy',
+    sad: 'sad',
+    angry: 'angry',
+    excited: 'happy',
+    surprised: 'surprised',
+    curious: 'relaxed',
+    confused: 'neutral',
+    embarrassed: 'sad',
+    annoyed: 'angry'
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -43,6 +56,30 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl }) => {
       controllerRef.current = null;
     };
   }, [modelUrl]);
+
+  useEffect(() => {
+    if (controllerRef.current && emotion && intensity !== undefined) {
+      expressions.forEach(e => {
+        if (e !== 'blink') {
+          controllerRef.current?.setExpression(e, 0);
+        }
+      });
+      
+      const targetExpr = emotionToExpressionMap[emotion.toLowerCase()] || 'neutral';
+      
+      if (expressions.includes(targetExpr)) {
+        controllerRef.current.setExpression(targetExpr, intensity);
+      } else if (expressions.includes('neutral')) {
+        controllerRef.current.setExpression('neutral', intensity);
+      }
+    }
+  }, [emotion, intensity, expressions]);
+
+  useEffect(() => {
+    if (controllerRef.current && animation) {
+      controllerRef.current.playAnimation(animation);
+    }
+  }, [animation]);
 
   const handleExpressionTest = (expr: string) => {
     if (!controllerRef.current) return;

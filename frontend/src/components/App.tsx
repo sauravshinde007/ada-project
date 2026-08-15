@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChatMessage, WebSocketMessage, WebSocketResponse } from '../../../shared/src/types/index';
 import { VRMAvatar } from '../avatar';
 import './App.css';
@@ -63,6 +63,10 @@ function App() {
     setInputValue('');
   };
 
+  const latestAdaMessage = useMemo(() => {
+    return [...messages].reverse().find(m => m.sender === 'ada');
+  }, [messages]);
+
   return (
     <div className="main-container">
       <header className="main-header">
@@ -74,7 +78,12 @@ function App() {
       </header>
 
       <div className="avatar-section">
-        <VRMAvatar modelUrl="/models/ada-vrm-1.0.vrm" />
+        <VRMAvatar 
+          modelUrl="/models/ada-vrm-1.0.vrm" 
+          emotion={latestAdaMessage?.emotion}
+          intensity={latestAdaMessage?.intensity}
+          animation={latestAdaMessage?.animation}
+        />
       </div>
       
       <div className="chat-section">

@@ -14,6 +14,8 @@ export class AvatarController {
   private targetLookAtY = 0;
   private currentLookAtX = 0;
   private currentLookAtY = 0;
+  private targetExpressions: Record<string, number> = {};
+  private currentExpressions: Record<string, number> = {};
 
   constructor(private container: HTMLDivElement) {
     this.scene = new THREE.Scene();
@@ -84,6 +86,10 @@ export class AvatarController {
           let expressionNames: string[] = [];
           if (this.currentVrm.expressionManager) {
              expressionNames = this.currentVrm.expressionManager.expressions.map(e => e.expressionName);
+             expressionNames.forEach(name => {
+               this.targetExpressions[name] = 0;
+               this.currentExpressions[name] = 0;
+             });
           }
 
           this.startBlinking();
@@ -105,7 +111,18 @@ export class AvatarController {
 
   public setExpression(name: string, weight: number): void {
     if (this.currentVrm && this.currentVrm.expressionManager) {
-      this.currentVrm.expressionManager.setValue(name, weight);
+      if (this.targetExpressions[name] !== undefined) {
+        this.targetExpressions[name] = weight;
+      } else {
+        this.currentVrm.expressionManager.setValue(name, weight);
+      }
+    }
+  }
+
+  public playAnimation(name: string): void {
+    // Abstraction for future skeletal animation implementation
+    if (name && name !== 'neutral') {
+      console.log(`[AvatarController] Animation requested: ${name} (Not fully implemented yet)`);
     }
   }
 
@@ -171,6 +188,16 @@ export class AvatarController {
         if (spine) {
           // Subtle breathing (pitch oscillation)
           spine.rotation.x = Math.sin(time * 2) * 0.02;
+        }
+      }
+
+      if (this.currentVrm.expressionManager) {
+        for (const [name, targetWeight] of Object.entries(this.targetExpressions)) {
+          if (name === 'blink') continue; // Handled separately
+          const currentWeight = this.currentExpressions[name] || 0;
+          const newWeight = THREE.MathUtils.lerp(currentWeight, targetWeight, delta * 5.0);
+          this.currentExpressions[name] = newWeight;
+          this.currentVrm.expressionManager.setValue(name, newWeight);
         }
       }
 
