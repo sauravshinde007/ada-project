@@ -7,6 +7,8 @@ import { LlamaCppProvider } from './ai/providers/LlamaCppProvider.js';
 import { LLMMessage } from './ai/providers/LLMProvider.js';
 import { ADA_SYSTEM_PROMPT } from './ai/prompts/SystemPrompt.js';
 import { validateStructuredResponse } from '../../shared/src/schemas/emotion.js';
+import { MemoryService } from './memory/MemoryService.js';
+import { MemoryManager } from './memory/MemoryManager.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -25,9 +27,12 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 const llmProvider = new LlamaCppProvider();
+const memoryService = new MemoryService();
+const memoryManager = new MemoryManager(llmProvider, memoryService);
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
+  const sessionId = Date.now().toString(); // Simple unique ID for the session/conversation
 
   const conversation: LLMMessage[] = [
     {
@@ -44,14 +49,34 @@ wss.on('connection', (ws: WebSocket) => {
         const userMsg = data.payload;
         console.log('Received message:', userMsg.text);
 
+        let relevantContext = await memoryManager.processExplicitCommands(userMsg.text);
+        let isExplicitCommand = !!relevantContext;
+
+        if (!relevantContext) {
+          relevantContext = memoryManager.getRelevantContext(userMsg.text);
+        }
+
+        const userContentWithContext = (relevantContext || '') + userMsg.text;
+        
+        if (relevantContext) {
+          console.log('[DEBUG-PROMPT-INJECTION] Injected memory context into prompt.');
+          console.log('[DEBUG-PROMPT-INJECTION] Full user generation content:\n', userContentWithContext);
+        }
+
+        const generationMessages = [...conversation, {
+          role: 'user',
+          content: userContentWithContext
+        }];
+
         conversation.push({
           role: 'user',
           content: userMsg.text
         });
+        memoryService.saveConversationMessage(sessionId, 'user', userMsg.text);
 
         try {
           const response = await llmProvider.generate({
-            messages: conversation
+            messages: generationMessages as LLMMessage[]
           });
 
           let parsedResponse;
@@ -83,6 +108,7 @@ wss.on('connection', (ws: WebSocket) => {
             role: 'assistant',
             content: JSON.stringify(parsedResponse)
           });
+          memoryService.saveConversationMessage(sessionId, 'assistant', JSON.stringify(parsedResponse));
 
           const responseMsg: ChatMessage = {
             id: Date.now().toString(),
@@ -100,6 +126,11 @@ wss.on('connection', (ws: WebSocket) => {
           };
 
           ws.send(JSON.stringify(wsResponse));
+
+          // Run extraction in background only if it wasn't an explicit command
+          if (!isExplicitCommand) {
+            memoryManager.extractMemoryBackground(userMsg.text);
+          }
         } catch (llmError) {
           console.error('LLM generation error:', llmError);
           
