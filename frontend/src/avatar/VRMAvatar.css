@@ -1,0 +1,69 @@
+.vrm-avatar-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background-color: transparent;
+  background: radial-gradient(circle at center, #2a2a35 0%, #1a1a24 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.vrm-avatar-wrapper canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.vrm-loading, .vrm-error {
+  position: absolute;
+  color: white;
+  font-family: sans-serif;
+  background: rgba(0,0,0,0.5);
+  padding: 10px 20px;
+  border-radius: 8px;
+}
+
+.vrm-error {
+  background: rgba(255, 0, 0, 0.5);
+}
+
+.vrm-dev-panel {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 10px;
+  border-radius: 8px;
+  max-width: 250px;
+  max-height: 90%;
+  overflow-y: auto;
+}
+
+.vrm-dev-panel h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.85rem;
+  color: #ddd;
+}
+
+.vrm-dev-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vrm-dev-buttons button {
+  background: #3f51b5;
+  border: none;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.vrm-dev-buttons button:hover {
+  background: #5c6bc0;
+}
