@@ -6,6 +6,7 @@ import './App.css';
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(true);
   const ws = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -69,14 +70,6 @@ function App() {
 
   return (
     <div className="main-container">
-      <header className="main-header">
-        <h1>Ada - AI Companion</h1>
-        <div className="status-indicator">
-          <span className={`status-dot ${ws.current?.readyState === WebSocket.OPEN ? 'online' : 'offline'}`}></span>
-          {ws.current?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected'}
-        </div>
-      </header>
-
       <div className="avatar-section">
         <VRMAvatar 
           modelUrl="/models/ada-vrm-1.0.vrm" 
@@ -86,37 +79,50 @@ function App() {
         />
       </div>
       
-      <div className="chat-section">
-        <div className="chat-messages">
-        {messages.length === 0 && (
-          <div className="empty-state">
-            <p>No messages yet. Say hello to Ada!</p>
-          </div>
-        )}
-        {messages.map((msg) => (
-          <div key={msg.id} className={`message-wrapper ${msg.sender}`}>
-            <div className={`message-bubble ${msg.sender}`}>
-              <span className="sender-name">{msg.sender === 'user' ? 'You' : 'Ada'}</span>
-              <p>{msg.text}</p>
-              <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      <div className={`chat-section ${isChatOpen ? 'open' : 'closed'}`}>
+        <div className="chat-toggle-handle" onClick={() => setIsChatOpen(!isChatOpen)}>
+          <span>{isChatOpen ? '▶' : '◀'} Chat</span>
+        </div>
+        <div className="chat-content-wrapper">
+          <header className="chat-header">
+            <h2>Ada</h2>
+            <div className="status-indicator">
+              <span className={`status-dot ${ws.current?.readyState === WebSocket.OPEN ? 'online' : 'offline'}`}></span>
+              {ws.current?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected'}
             </div>
-          </div>
-        ))}
-        <div ref={chatEndRef} />
-      </div>
+          </header>
 
-      <form className="chat-input-form" onSubmit={handleSend}>
-        <input
-          type="text"
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          placeholder="Type your message..."
-          className="chat-input"
-        />
-        <button type="submit" className="send-button" disabled={!inputValue.trim()}>
-          Send
-        </button>
-      </form>
+          <div className="chat-messages">
+          {messages.length === 0 && (
+            <div className="empty-state">
+              <p>No messages yet. Say hello to Ada!</p>
+            </div>
+          )}
+          {messages.map((msg) => (
+            <div key={msg.id} className={`message-wrapper ${msg.sender}`}>
+              <div className={`message-bubble ${msg.sender}`}>
+                <span className="sender-name">{msg.sender === 'user' ? 'You' : 'Ada'}</span>
+                <p>{msg.text}</p>
+                <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+          </div>
+
+          <form className="chat-input-form" onSubmit={handleSend}>
+            <input
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              placeholder="Type your message..."
+              className="chat-input"
+            />
+            <button type="submit" className="send-button" disabled={!inputValue.trim()}>
+              Send
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

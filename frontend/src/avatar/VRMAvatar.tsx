@@ -10,6 +10,7 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [expressions, setExpressions] = useState<string[]>([]);
+  const [isDevPanelOpen, setIsDevPanelOpen] = useState(false);
 
   const emotionToExpressionMap: Record<string, string> = {
     neutral: 'neutral',
@@ -122,14 +123,19 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
       )}
       
       {!loading && !error && expressions.length > 0 && (
-         <div className="vrm-dev-panel">
-            <h4>Dev: Test Expressions</h4>
-            <div className="vrm-dev-buttons">
-              {expressions.map(expr => (
-                 <button key={expr} onClick={() => handleExpressionTest(expr)}>
-                   {expr}
-                 </button>
-              ))}
+         <div className={`vrm-dev-panel ${isDevPanelOpen ? 'open' : 'closed'}`}>
+            <div className="vrm-dev-content">
+              <h4>Test Expressions</h4>
+              <div className="vrm-dev-buttons">
+                {expressions.map(expr => (
+                   <button key={expr} onClick={() => handleExpressionTest(expr)}>
+                     {expr}
+                   </button>
+                ))}
+              </div>
+            </div>
+            <div className="vrm-dev-toggle" onClick={() => setIsDevPanelOpen(!isDevPanelOpen)}>
+               <span>{isDevPanelOpen ? '◀' : '▶'} Dev</span>
             </div>
          </div>
       )}

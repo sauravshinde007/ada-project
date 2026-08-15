@@ -32,38 +32,81 @@
 
 .vrm-dev-panel {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 10px;
-  border-radius: 8px;
-  max-width: 250px;
-  max-height: 90%;
+  top: 20px;
+  left: -220px;
+  background: rgba(25, 25, 30, 0.75);
+  backdrop-filter: blur(12px);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-top-right-radius: 8px;
+  border-bottom-right-radius: 8px;
+  display: flex;
+  flex-direction: row;
+  transform: translateX(0);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 5;
+  box-shadow: 4px 0 15px rgba(0,0,0,0.3);
+}
+
+.vrm-dev-panel.open {
+  transform: translateX(220px);
+}
+
+.vrm-dev-toggle {
+  width: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: transparent;
+  color: #fff;
+  font-size: 0.85rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.vrm-dev-toggle span {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 16px 0;
+  user-select: none;
+}
+
+.vrm-dev-toggle:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.vrm-dev-content {
+  padding: 16px;
+  width: 220px;
+  max-height: 80vh;
   overflow-y: auto;
 }
 
-.vrm-dev-panel h4 {
-  margin: 0 0 8px 0;
-  font-size: 0.85rem;
-  color: #ddd;
+.vrm-dev-content h4 {
+  margin: 0 0 12px 0;
+  font-size: 0.9rem;
+  color: #fff;
+  font-weight: 600;
 }
 
 .vrm-dev-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
 }
 
 .vrm-dev-buttons button {
-  background: #3f51b5;
-  border: none;
+  background: rgba(63, 81, 181, 0.8);
+  border: 1px solid rgba(255,255,255,0.1);
   color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 6px 10px;
+  border-radius: 6px;
   font-size: 0.75rem;
   cursor: pointer;
+  transition: background 0.2s;
 }
 
 .vrm-dev-buttons button:hover {
-  background: #5c6bc0;
+  background: rgba(92, 107, 192, 0.9);
 }

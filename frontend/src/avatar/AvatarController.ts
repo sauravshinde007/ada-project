@@ -22,7 +22,7 @@ export class AvatarController {
     
     // Setup camera
     this.camera = new THREE.PerspectiveCamera(35, container.clientWidth / container.clientHeight, 0.1, 20);
-    this.camera.position.set(0, 1.4, 3.0); // Focus on upper body / face
+    this.camera.position.set(0, 1.4, 1.2); // Focus on upper body / face, zoomed in
 
     // Setup renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -78,6 +78,15 @@ export class AvatarController {
 
           vrm.scene.position.y = 0;
           vrm.scene.rotation.y = 0;
+
+          // Put into a relaxed idle pose instead of T-pose
+          if (vrm.humanoid) {
+            const leftUpperArm = vrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+            const rightUpperArm = vrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+            // Rotate arms down (around -1.2/1.2 radians is a natural relaxed drop in VRM normalized space)
+            if (leftUpperArm) leftUpperArm.rotation.z = -1.2;
+            if (rightUpperArm) rightUpperArm.rotation.z = 1.2;
+          }
 
           this.currentVrm = vrm;
           this.scene.add(vrm.scene);
@@ -184,10 +193,69 @@ export class AvatarController {
       const time = this.clock.getElapsedTime();
       
       if (this.currentVrm.humanoid) {
+        const hips = this.currentVrm.humanoid.getNormalizedBoneNode('hips');
         const spine = this.currentVrm.humanoid.getNormalizedBoneNode('spine');
+        const chest = this.currentVrm.humanoid.getNormalizedBoneNode('chest');
+        const neck = this.currentVrm.humanoid.getNormalizedBoneNode('neck');
+        const leftShoulder = this.currentVrm.humanoid.getNormalizedBoneNode('leftShoulder');
+        const rightShoulder = this.currentVrm.humanoid.getNormalizedBoneNode('rightShoulder');
+        const leftUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('leftUpperArm');
+        const rightUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+
+        // Complex time variables to avoid perfectly repeating loops
+        const t1 = time * 0.5;
+        const t2 = time * 0.31;
+        const t3 = time * 0.73;
+        const breath = Math.sin(time * 1.5);
+
+        if (hips) {
+          // Small natural body/weight shifts
+          hips.rotation.z = Math.cos(time * 0.25) * 0.01;
+          hips.rotation.y = Math.sin(time * 0.15) * 0.02;
+        }
+
         if (spine) {
-          // Subtle breathing (pitch oscillation)
-          spine.rotation.x = Math.sin(time * 2) * 0.02;
+          // Subtle body movement and breathing pitch
+          spine.rotation.x = breath * 0.015 + Math.sin(t2) * 0.01;
+          spine.rotation.y = Math.sin(t1) * 0.015;
+          spine.rotation.z = Math.cos(t3) * 0.01;
+        }
+
+        if (chest) {
+          // Chest expansion for breathing
+          chest.scale.set(
+            1 + breath * 0.01,
+            1 + breath * 0.01,
+            1 + breath * 0.02
+          );
+        }
+
+        if (neck) {
+          // Slight neck/head idle motion
+          neck.rotation.x = Math.sin(t1 * 1.2) * 0.01;
+          neck.rotation.y = Math.cos(t2 * 1.1) * 0.01;
+          neck.rotation.z = Math.sin(t3 * 0.9) * 0.01;
+        }
+
+        if (leftShoulder) {
+          // Subtle shoulder breathing shrug
+          leftShoulder.rotation.z = breath * 0.01 + 0.02;
+        }
+        
+        if (rightShoulder) {
+          rightShoulder.rotation.z = -breath * 0.01 - 0.02;
+        }
+
+        if (leftUpperArm) {
+          // Idle arm movement
+          leftUpperArm.rotation.z = -1.2 + Math.sin(time * 0.8) * 0.02;
+          leftUpperArm.rotation.x = Math.sin(time * 1.1) * 0.02;
+        }
+
+        if (rightUpperArm) {
+          // Idle arm movement
+          rightUpperArm.rotation.z = 1.2 - Math.sin(time * 0.8) * 0.02;
+          rightUpperArm.rotation.x = Math.sin(time * 1.1) * 0.02;
         }
       }
 
@@ -205,9 +273,21 @@ export class AvatarController {
         // Smooth interpolation towards the target lookAt position
         this.currentLookAtX += (this.targetLookAtX - this.currentLookAtX) * delta * 5.0;
         this.currentLookAtY += (this.targetLookAtY - this.currentLookAtY) * delta * 5.0;
-        const yaw = this.currentLookAtX * 30 * THREE.MathUtils.DEG2RAD;
-        const pitch = this.currentLookAtY * -30 * THREE.MathUtils.DEG2RAD;
-        this.currentVrm.lookAt.applier.applyYawPitch(yaw, pitch);
+        
+        // Add subtle idle gaze drift so she feels alive even when staring
+        const idleYaw = (Math.sin(time * 0.6) + Math.cos(time * 0.35)) * 2 * THREE.MathUtils.DEG2RAD;
+        const idlePitch = Math.sin(time * 0.45) * 2 * THREE.MathUtils.DEG2RAD;
+        
+        const maxYaw = 40 * THREE.MathUtils.DEG2RAD;
+        const maxPitch = 30 * THREE.MathUtils.DEG2RAD;
+        
+        const baseYaw = this.currentLookAtX * maxYaw;
+        const basePitch = this.currentLookAtY * -maxPitch;
+        
+        const finalYaw = THREE.MathUtils.clamp(baseYaw + idleYaw, -maxYaw, maxYaw);
+        const finalPitch = THREE.MathUtils.clamp(basePitch + idlePitch, -maxPitch, maxPitch);
+        
+        this.currentVrm.lookAt.applier.applyYawPitch(finalYaw, finalPitch);
       }
 
       this.currentVrm.update(delta);
