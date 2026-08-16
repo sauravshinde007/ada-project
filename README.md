@@ -1,5 +1,8 @@
 # Ada — Local AI VTuber Personal Assistant
 
+<img width="1280" height="640" alt="image" src="https://github.com/user-attachments/assets/2d9f501a-1b0e-4e53-8cc1-22fb8f8092a4" />
+
+
 Ada is a local-first personal AI companion presented through an anime-style VRM avatar.
 
 The project combines a local language model, persistent memory, structured AI responses, personality, emotion-driven avatar behavior, and local text-to-speech into one interactive assistant. The browser provides the visual experience while the Node.js backend coordinates conversation, memory, AI providers, avatar state, and voice generation.
