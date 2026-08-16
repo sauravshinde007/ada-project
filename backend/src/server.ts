@@ -9,6 +9,7 @@ import { ADA_SYSTEM_PROMPT } from './ai/prompts/SystemPrompt.js';
 import { validateStructuredResponse } from '../../shared/src/schemas/emotion.js';
 import { MemoryService } from './memory/MemoryService.js';
 import { MemoryManager } from './memory/MemoryManager.js';
+import { TTSService } from './tts/TTSService.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -29,6 +30,7 @@ const wss = new WebSocketServer({ server });
 const llmProvider = new LlamaCppProvider();
 const memoryService = new MemoryService();
 const memoryManager = new MemoryManager(llmProvider, memoryService);
+const ttsService = new TTSService();
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
@@ -119,6 +121,15 @@ wss.on('connection', (ws: WebSocket) => {
             intensity: parsedResponse.intensity,
             animation: parsedResponse.animation
           };
+
+          try {
+            const audioBase64 = await ttsService.generateAudio(parsedResponse.text, parsedResponse.emotion, parsedResponse.intensity);
+            if (audioBase64) {
+              responseMsg.audioData = audioBase64;
+            }
+          } catch (err) {
+            console.error('Failed to generate audio, continuing without TTS', err);
+          }
 
           const wsResponse: WebSocketResponse = {
             type: 'chat_response',

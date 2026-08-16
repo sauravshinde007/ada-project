@@ -6,6 +6,7 @@ export interface ChatMessage {
   emotion?: string;
   intensity?: number;
   animation?: string;
+  audioData?: string;
 }
 
 export interface WebSocketMessage {

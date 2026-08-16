@@ -25,6 +25,8 @@ build/
 
 # Third-party repositories
 llama.cpp/
+external/GPT-SoVITS/
+voice-samples/
 
 # OS generated files
 .DS_Store

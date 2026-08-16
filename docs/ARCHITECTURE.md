@@ -19,7 +19,8 @@
 │                Node.js Backend                       │
 │                                                      │
 │  Conversation │ AI Orchestrator │ Event Bus         │
-│  Memory       │ Emotion Engine  │ Tool Registry     │
+│  Memory       │ Emotion Engine  │ TTS Service       │
+│  Tool Registry                                       │
 └──────────┬──────────────┬───────────────┬───────────┘
            │              │               │
            ▼              ▼               ▼
@@ -127,6 +128,77 @@ interface LLMProvider {
 
 The initial implementation will use local `llama.cpp`.
 
+### TTS Provider
+
+The rest of the application must communicate with an abstraction rather than directly importing GPT-SoVITS throughout the application.
+
+For example:
+
+```ts
+interface TTSProvider {
+  synthesize(request: TTSRequest): Promise<TTSResult>;
+}
+```
+
+A request should carry both text and vocal style information:
+
+```ts
+interface TTSRequest {
+  text: string;
+  emotion: string;
+  intensity: number;
+}
+```
+
+The initial implementation uses local GPT-SoVITS v2Pro.
+
+The provider is responsible for translating application-level requests into GPT-SoVITS-specific inference parameters and reference-voice selection.
+
+Current implementation:
+
+```text
+TTSService
+    ↓
+GPTSoVITSProvider
+    ↓
+GPT-SoVITS API
+http://127.0.0.1:9880/tts
+    ↓
+GPT-SoVITS v2Pro
+```
+
+GPT-SoVITS-specific configuration is isolated from general conversation logic.
+
+The local API is configured using:
+
+```text
+GPT_SoVITS/configs/ada_v2pro.yaml
+```
+
+The configuration uses the `custom` section of `TTS_Config` and the installed v2Pro weights:
+
+```text
+s1v3.ckpt
+v2Pro/s2Gv2Pro.pth
+```
+
+The API currently runs on CPU to avoid competing for the limited VRAM of the RTX 3050 with the local llama.cpp LLM.
+
+### TTS Text Preprocessor
+
+LLM output should pass through a text-preprocessing layer before reaching the TTS provider.
+
+Responsibilities include:
+
+- normalizing unnecessary ALL-CAPS
+- avoiding acronym/spelling pronunciation for ordinary words
+- removing markdown
+- handling unsupported symbols/emojis
+- normalizing excessive punctuation
+- preserving meaningful pauses
+
+The rest of the application should not need to know about GPT-SoVITS's text-normalization requirements.
+
 ### Avatar
 
 The rest of the application must communicate through an abstraction such as:
@@ -136,6 +208,7 @@ interface AvatarController {
   setExpression(name: string, intensity: number): void;
   playAnimation(name: string): void;
   lookAt(x: number, y: number): void;
+  setTalking(active: boolean): void;
 }
 ```
 
@@ -167,8 +240,7 @@ Structured Response
 Event Bus
     ├── Chat UI
     ├── Emotion Engine
-    ├── Avatar Controller
-    └── TTS (future)
+    └── Avatar Controller
 ```
 
 ## Security
@@ -176,3 +248,109 @@ Event Bus
 Tool execution must be permissioned.
 
 Never allow an LLM to execute arbitrary terminal commands, delete files, send messages, or modify the system without an explicit permission layer.
+
+## Target Voice Data Flow
+
+```text
+User message
+    ↓
+Conversation Manager
+    ↓
+Memory Retrieval
+    ↓
+Prompt Builder
+    ↓
+LLM Provider
+    ↓
+Structured Response
+    ├── text
+    ├── emotion
+    ├── intensity
+    └── animation
+    ↓
+TTS Text Preprocessor
+    ↓
+TTS Provider
+    │
+    └── GPT-SoVITS
+          ↓
+       Audio
+          ↓
+    Event Bus
+       ├── Chat UI
+       ├── Audio Playback
+       ├── Emotion Engine
+       └── Avatar Controller
+                              │
+                              └── Talking / Lip Sync
+
+```
+
+TTS is an application capability, not an LLM responsibility. If TTS fails or is unavailable, the text response should still be delivered.
+
+### Current Phase 7A Implementation
+
+The current implementation extends the structured chat response with generated audio:
+
+```text
+LLM
+ ↓
+Structured ChatMessage
+ ├── text
+ ├── emotion
+ ├── intensity
+ ├── animation
+ └── audioData
+        ↑
+        │
+TTSService
+ ↓
+TTSPreprocessor
+ ↓
+GPTSoVITSProvider
+ ↓
+GPT-SoVITS /tts :9880
+```
+
+The backend currently sends generated audio as Base64 through the existing WebSocket/chat message path. The frontend creates basic browser audio playback from `audioData`.
+
+This is a Phase 7A transport mechanism and is not the final streaming architecture.
+
+### Current Voice Infrastructure
+
+```text
+GPT-SoVITS Main WebUI       → :9874
+GPT-SoVITS TTS Inference UI → :9872
+GPT-SoVITS API              → :9880
+```
+
+The API uses the local v2Pro configuration and reference-voice zero-shot synthesis.
+
+## Voice Architecture
+
+The long-term voice system should support multiple speaking styles without coupling the rest of Ada to one reference audio file.
+
+```text
+                         Emotion Engine
+                              │
+                   emotion + intensity
+                              │
+                              ▼
+LLM text ──► TTS Preprocessor ──► TTS Provider
+                                  │
+                                  ├── reference voice
+                                  ├── speaking style
+                                  └── synthesis parameters
+                                         │
+                                         ▼
+                                    GPT-SoVITS
+                                         │
+                                         ▼
+                                       Audio
+                                         │
+                              ┌──────────┴──────────┐
+                              ▼                     ▼
+                         Audio Output         Avatar Talking
+```
+
+The first implementation can use one reference voice. Emotion-specific reference clips and speaking-style presets can be introduced later.

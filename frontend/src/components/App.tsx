@@ -103,6 +103,9 @@ function App() {
               <div className={`message-bubble ${msg.sender}`}>
                 <span className="sender-name">{msg.sender === 'user' ? 'You' : 'Ada'}</span>
                 <p>{msg.text}</p>
+                {msg.audioData && (
+                  <audio autoPlay src={`data:audio/wav;base64,${msg.audioData}`} style={{ display: 'none' }} />
+                )}
                 <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
             </div>

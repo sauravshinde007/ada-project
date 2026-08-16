@@ -8,6 +8,17 @@ Implement only the requested phase/task.
 
 Do not prematurely implement future roadmap items.
 
+The current development phase is **Phase 7: Voice / TTS**.
+
+Phase 7A backend TTS integration has been implemented and the GPT-SoVITS v2Pro API has been independently verified. The complete user-facing Ada audio flow still requires final manual verification.
+
+Remaining Phase 7 work includes:
+- final end-to-end TTS verification
+- talking-state synchronization
+- avatar lip-sync
+- emotion-aware TTS
+- streaming/interruption
+
 ## Before Changing Code
 
 1. Read `README.md`.
@@ -25,7 +36,10 @@ Do not prematurely implement future roadmap items.
 - Use interfaces for replaceable infrastructure.
 - Do not couple application logic directly to a specific LLM provider.
 - Do not couple application logic directly to the VRM implementation.
+- Do not couple application logic directly to GPT-SoVITS.
 - Prefer small modules with clear responsibilities.
+- Keep TTS provider-specific configuration inside the TTS infrastructure layer.
+- Emotion should remain an application-level concept that can be consumed by both avatar and TTS systems.
 
 ## Local-First Rule
 
@@ -109,3 +123,59 @@ At the end of each task, report:
 6. The next recommended task.
 
 Do not silently make unrelated architectural changes.
+
+## TTS Rules
+
+- Do not send raw LLM text directly to GPT-SoVITS.
+- Pass generated text through a TTS preprocessing layer first.
+- Normalize problematic ALL-CAPS text.
+- Do not rely on capitalization to represent vocal emotion.
+- Keep voice identity/reference selection separate from emotion selection.
+- Keep GPT-SoVITS-specific paths and parameters out of general conversation logic.
+- TTS failures must not crash the core chat system.
+- If TTS is unavailable, Ada should still be able to return a normal text response.
+- Avoid blocking the main conversation/event loop unnecessarily while audio is being generated.
+- Design the TTS interface so the implementation can be replaced later.
+
+## TTS Testing
+
+When implementing TTS changes:
+
+1. Test successful synthesis with a known reference voice.
+2. Test text preprocessing, including ALL-CAPS input.
+3. Test graceful behavior when GPT-SoVITS is unavailable.
+4. Verify that the existing text-only chat path still works.
+5. Verify the actual user-facing `LLM → TTS → browser audio` flow before marking Phase 7A complete.
+6. Do not claim emotion-aware voice behavior is complete until it has been manually evaluated.
+
+### Current TTS Environment
+
+The local GPT-SoVITS setup currently exposes:
+
+- Main WebUI: `http://127.0.0.1:9874`
+- TTS inference UI: `http://127.0.0.1:9872`
+- API: `http://127.0.0.1:9880`
+
+The API uses `GPT_SoVITS/configs/ada_v2pro.yaml` with:
+
+- `version: v2Pro`
+- `s1v3.ckpt`
+- `v2Pro/s2Gv2Pro.pth`
+- CPU inference (`device: cpu`, `is_half: false`)
+
+This CPU configuration is intentional for the current 4 GB RTX 3050 environment because llama.cpp also requires GPU VRAM.
+
+### Current Phase 7A Status
+
+Implemented and independently verified:
+
+- TTS provider abstraction
+- GPT-SoVITS provider
+- TTS preprocessing
+- TTS service/error handling
+- audio delivery contract
+- basic frontend audio playback
+- GPT-SoVITS v2Pro API startup
+- direct `/tts` synthesis with the reference voice
+
+Do not start Phase 7B implementation until the complete Ada user-facing TTS flow has been manually verified.
