@@ -3,7 +3,7 @@ import { AvatarController } from './AvatarController';
 import { VRMAvatarProps } from './avatarTypes';
 import './VRMAvatar.css';
 
-export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensity, animation }) => {
+export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensity, animation, isTalking, isThinking }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const controllerRef = useRef<AvatarController | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,28 +59,54 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
   }, [modelUrl]);
 
   useEffect(() => {
-    if (controllerRef.current && emotion && intensity !== undefined) {
+    if (!controllerRef.current) return;
+
+    if (isTalking) {
+      if (emotion && intensity !== undefined) {
+        expressions.forEach(e => {
+          if (e !== 'blink') {
+            controllerRef.current?.setExpression(e, 0);
+          }
+        });
+        
+        const targetExpr = emotionToExpressionMap[emotion.toLowerCase()] || 'neutral';
+        
+        if (expressions.includes(targetExpr)) {
+          controllerRef.current.setExpression(targetExpr, intensity);
+        } else if (expressions.includes('neutral')) {
+          controllerRef.current.setExpression('neutral', intensity);
+        }
+      }
+    } else {
+      // Return to normal IDLE baseline when not talking
       expressions.forEach(e => {
         if (e !== 'blink') {
           controllerRef.current?.setExpression(e, 0);
         }
       });
-      
-      const targetExpr = emotionToExpressionMap[emotion.toLowerCase()] || 'neutral';
-      
-      if (expressions.includes(targetExpr)) {
-        controllerRef.current.setExpression(targetExpr, intensity);
-      } else if (expressions.includes('neutral')) {
-        controllerRef.current.setExpression('neutral', intensity);
+      if (expressions.includes('neutral')) {
+        controllerRef.current.setExpression('neutral', 1.0);
       }
     }
-  }, [emotion, intensity, expressions]);
+  }, [emotion, intensity, expressions, isTalking]);
 
   useEffect(() => {
     if (controllerRef.current && animation) {
       controllerRef.current.playAnimation(animation);
     }
   }, [animation]);
+
+  useEffect(() => {
+    if (controllerRef.current) {
+      controllerRef.current.setTalking(!!isTalking);
+    }
+  }, [isTalking]);
+
+  useEffect(() => {
+    if (controllerRef.current) {
+      controllerRef.current.setThinking(!!isThinking);
+    }
+  }, [isThinking]);
 
   const handleExpressionTest = (expr: string) => {
     if (!controllerRef.current) return;

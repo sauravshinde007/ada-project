@@ -16,6 +16,11 @@ export class AvatarController {
   private currentLookAtY = 0;
   private targetExpressions: Record<string, number> = {};
   private currentExpressions: Record<string, number> = {};
+  private isTalking: boolean = false;
+  private isThinking: boolean = false;
+  private thinkingWeight: number = 0;
+  private currentMouthOpen: number = 0;
+  private mouthExpression: string = 'aa';
 
   constructor(private container: HTMLDivElement) {
     this.scene = new THREE.Scene();
@@ -99,6 +104,11 @@ export class AvatarController {
                this.targetExpressions[name] = 0;
                this.currentExpressions[name] = 0;
              });
+             if (expressionNames.includes('aa')) {
+                 this.mouthExpression = 'aa';
+             } else if (expressionNames.includes('a')) {
+                 this.mouthExpression = 'a';
+             }
           }
 
           this.startBlinking();
@@ -133,6 +143,14 @@ export class AvatarController {
     if (name && name !== 'neutral') {
       console.log(`[AvatarController] Animation requested: ${name} (Not fully implemented yet)`);
     }
+  }
+
+  public setTalking(talking: boolean): void {
+    this.isTalking = talking;
+  }
+
+  public setThinking(thinking: boolean): void {
+    this.isThinking = thinking;
   }
 
   public lookAt(x: number, y: number): void {
@@ -184,6 +202,8 @@ export class AvatarController {
     this.renderer.setSize(width, height);
   }
 
+
+
   private animate(): void {
     this.animationFrameId = requestAnimationFrame(this.animate);
     
@@ -201,12 +221,22 @@ export class AvatarController {
         const rightShoulder = this.currentVrm.humanoid.getNormalizedBoneNode('rightShoulder');
         const leftUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('leftUpperArm');
         const rightUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+        const leftLowerArm = this.currentVrm.humanoid.getNormalizedBoneNode('leftLowerArm');
+        const rightLowerArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightLowerArm');
+        const leftHand = this.currentVrm.humanoid.getNormalizedBoneNode('leftHand');
+        const rightHand = this.currentVrm.humanoid.getNormalizedBoneNode('rightHand');
 
         // Complex time variables to avoid perfectly repeating loops
         const t1 = time * 0.5;
         const t2 = time * 0.31;
         const t3 = time * 0.73;
         const breath = Math.sin(time * 1.5);
+
+        this.thinkingWeight = THREE.MathUtils.lerp(
+          this.thinkingWeight,
+          this.isThinking && !this.isTalking ? 1 : 0,
+          delta * 4.0
+        );
 
         if (hips) {
           // Small natural body/weight shifts
@@ -246,27 +276,51 @@ export class AvatarController {
           rightShoulder.rotation.z = -breath * 0.01 - 0.02;
         }
 
-        if (leftUpperArm) {
-          // Idle arm movement
-          leftUpperArm.rotation.z = -1.2 + Math.sin(time * 0.8) * 0.02;
-          leftUpperArm.rotation.x = Math.sin(time * 1.1) * 0.02;
-        }
+        if (leftUpperArm && leftLowerArm && leftHand && rightUpperArm && rightLowerArm && rightHand) {
+          // --- IDLE POSE ---
+          // Currently, THINKING state visually just uses the IDLE pose.
+          const idlePose = {
+            leftUpperArm: { x: Math.sin(time * 1.1) * 0.02, y: 0, z: -1.2 + Math.sin(time * 0.8) * 0.02 },
+            leftLowerArm: { x: 0, y: 0, z: 0 },
+            leftHand: { x: 0, y: 0, z: 0 },
+            rightUpperArm: { x: Math.sin(time * 1.1) * 0.02, y: 0, z: 1.2 - Math.sin(time * 0.8) * 0.02 },
+            rightLowerArm: { x: 0, y: 0, z: 0 },
+            rightHand: { x: 0, y: 0, z: 0 }
+          };
 
-        if (rightUpperArm) {
-          // Idle arm movement
-          rightUpperArm.rotation.z = 1.2 - Math.sin(time * 0.8) * 0.02;
-          rightUpperArm.rotation.x = Math.sin(time * 1.1) * 0.02;
+          leftUpperArm.rotation.set(idlePose.leftUpperArm.x, idlePose.leftUpperArm.y, idlePose.leftUpperArm.z);
+          leftLowerArm.rotation.set(idlePose.leftLowerArm.x, idlePose.leftLowerArm.y, idlePose.leftLowerArm.z);
+          leftHand.rotation.set(idlePose.leftHand.x, idlePose.leftHand.y, idlePose.leftHand.z);
+          
+          rightUpperArm.rotation.set(idlePose.rightUpperArm.x, idlePose.rightUpperArm.y, idlePose.rightUpperArm.z);
+          rightLowerArm.rotation.set(idlePose.rightLowerArm.x, idlePose.rightLowerArm.y, idlePose.rightLowerArm.z);
+          rightHand.rotation.set(idlePose.rightHand.x, idlePose.rightHand.y, idlePose.rightHand.z);
         }
       }
 
       if (this.currentVrm.expressionManager) {
         for (const [name, targetWeight] of Object.entries(this.targetExpressions)) {
           if (name === 'blink') continue; // Handled separately
+          if (name === this.mouthExpression) continue; // Handled separately for lip sync
+
           const currentWeight = this.currentExpressions[name] || 0;
           const newWeight = THREE.MathUtils.lerp(currentWeight, targetWeight, delta * 5.0);
           this.currentExpressions[name] = newWeight;
           this.currentVrm.expressionManager.setValue(name, newWeight);
         }
+
+        // Procedural Lip Sync
+        if (this.isTalking) {
+           const t = time * 15;
+           // Mix sine waves to look like natural talking rather than a steady pulse
+           let talkVal = (Math.sin(t) + Math.sin(t * 1.3) + Math.sin(t * 0.7)) / 3;
+           talkVal = Math.abs(talkVal) * 0.7 + 0.1; // keep mouth slightly open
+           this.currentMouthOpen = THREE.MathUtils.lerp(this.currentMouthOpen, talkVal, delta * 15);
+        } else {
+           this.currentMouthOpen = THREE.MathUtils.lerp(this.currentMouthOpen, 0, delta * 15);
+        }
+        
+        this.currentVrm.expressionManager.setValue(this.mouthExpression, this.currentMouthOpen);
       }
 
       if (this.currentVrm.lookAt) {
@@ -275,8 +329,12 @@ export class AvatarController {
         this.currentLookAtY += (this.targetLookAtY - this.currentLookAtY) * delta * 5.0;
         
         // Add subtle idle gaze drift so she feels alive even when staring
-        const idleYaw = (Math.sin(time * 0.6) + Math.cos(time * 0.35)) * 2 * THREE.MathUtils.DEG2RAD;
-        const idlePitch = Math.sin(time * 0.45) * 2 * THREE.MathUtils.DEG2RAD;
+        let idleYaw = (Math.sin(time * 0.6) + Math.cos(time * 0.35)) * 2 * THREE.MathUtils.DEG2RAD;
+        let idlePitch = Math.sin(time * 0.45) * 2 * THREE.MathUtils.DEG2RAD;
+        
+        // During thinking, drift gaze upwards/away
+        idleYaw += this.thinkingWeight * (15 * THREE.MathUtils.DEG2RAD);
+        idlePitch += this.thinkingWeight * (-12 * THREE.MathUtils.DEG2RAD); 
         
         const maxYaw = 40 * THREE.MathUtils.DEG2RAD;
         const maxPitch = 30 * THREE.MathUtils.DEG2RAD;

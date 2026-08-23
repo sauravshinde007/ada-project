@@ -488,15 +488,12 @@ The GPT-SoVITS WebUI is optional and is only needed when manually testing or cha
 
 From the Ada repository:
 
-```bash
-cd ~/SauravSan/Coding/ada-project/llama.cpp
-```
 
 Start the local LLM:
 
 ```bash
-./build/bin/llama-server \
-  -m ../ai-models/qwen3-4b-q4_k_m.gguf \
+llama.cpp/build/bin/llama-server \
+  -m ai-models/Qwen3-4B-Q4_K_M.gguf \
   -c 4096 \
   -ngl 99 \
   --port 8080

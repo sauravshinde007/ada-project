@@ -6,7 +6,7 @@ const OUTPUT_FILENAME = 'project-context.txt';
 
 // Directories to completely ignore
 const IGNORE_DIRS = new Set([
-    'node_modules', '.git', 'dist', 'build', 'coverage', '.vscode', '.idea'
+    'node_modules', '.git', 'dist', 'build', 'coverage', '.vscode', '.idea', 'llama.cpp', 'external', 'models', 'voice-samples'
 ]);
 
 // Specific files to ignore (prevents token bloat from lockfiles)

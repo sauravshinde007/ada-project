@@ -13,7 +13,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Connected structured LLM responses to the TTS pipeline without coupling conversation logic directly to GPT-SoVITS.
   - Added `audioData` to the shared `ChatMessage` contract.
   - Added backend-to-frontend delivery of generated audio through the existing WebSocket message flow.
-  - Added basic frontend audio autoplay for generated TTS responses.
+  
+- **Phase 7B: Talking State & Basic Lip Sync**
+  - Connected the `isTalking` state directly to the React `<audio>` element's playback lifecycle (`onPlay`, `onEnded`, `onError`).
+  - Added basic procedural lip-sync to `AvatarController.ts` driving the `aa` (or `a`) expression with smoothed multi-frequency sine waves while `isTalking` is true.
+  - Ensured lip-sync naturally returns to 0 (IDLE) when audio completes.
+  - Passed `isTalking` down through `App.tsx` and `VRMAvatar.tsx` without disrupting existing features (breathing, gazes, emotions).
+  
+- **Phase 7C: Avatar Thinking State**
+  - Implemented `isThinking` state transitioning IDLE -> THINKING when sending a message, and THINKING -> TALKING when TTS plays.
+  - Temporarily disabled the custom THINKING pose in `AvatarController.ts` per request. The THINKING state now visually relies on the standard IDLE procedural animation (breathing, slight body shifts) without any distinct hand/arm offsets, pending a future pose redesign.
+  - Ensured THINKING state correctly transitions back to IDLE on error or empty response without crashing the animation cycle.
+  - Fixed expression persistence bug: emotions are now treated as temporary responses that naturally reset back to the normal IDLE baseline expression when TALKING ends or errors out.
+  
   - Added dedicated GPT-SoVITS v2Pro API configuration at `GPT_SoVITS/configs/ada_v2pro.yaml`.
   - Configured the GPT-SoVITS API to use `s1v3.ckpt` and `v2Pro/s2Gv2Pro.pth`.
   - Configured the API for CPU inference to avoid exhausting the RTX 3050's limited VRAM while llama.cpp is also used by Ada.

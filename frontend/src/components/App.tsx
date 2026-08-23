@@ -7,6 +7,8 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(true);
+  const [isTalking, setIsTalking] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
   const ws = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -23,6 +25,9 @@ function App() {
         const response: WebSocketResponse = JSON.parse(event.data);
         if (response.type === 'chat_response' && response.payload) {
           setMessages((prev) => [...prev, response.payload]);
+          if (!response.payload.audioData) {
+             setIsThinking(false);
+          }
         }
       } catch (e) {
         console.error('Failed to parse websocket message', e);
@@ -62,6 +67,7 @@ function App() {
     ws.current.send(JSON.stringify(wsMsg));
 
     setInputValue('');
+    setIsThinking(true);
   };
 
   const latestAdaMessage = useMemo(() => {
@@ -76,6 +82,8 @@ function App() {
           emotion={latestAdaMessage?.emotion}
           intensity={latestAdaMessage?.intensity}
           animation={latestAdaMessage?.animation}
+          isTalking={isTalking}
+          isThinking={isThinking}
         />
       </div>
       
@@ -104,7 +112,14 @@ function App() {
                 <span className="sender-name">{msg.sender === 'user' ? 'You' : 'Ada'}</span>
                 <p>{msg.text}</p>
                 {msg.audioData && (
-                  <audio autoPlay src={`data:audio/wav;base64,${msg.audioData}`} style={{ display: 'none' }} />
+                  <audio 
+                    autoPlay 
+                    src={`data:audio/wav;base64,${msg.audioData}`} 
+                    style={{ display: 'none' }}
+                    onPlay={() => { setIsTalking(true); setIsThinking(false); }}
+                    onEnded={() => setIsTalking(false)}
+                    onError={() => { setIsTalking(false); setIsThinking(false); }}
+                  />
                 )}
                 <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
               </div>
