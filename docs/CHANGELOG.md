@@ -25,10 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Temporarily disabled the custom THINKING pose in `AvatarController.ts` per request. The THINKING state now visually relies on the standard IDLE procedural animation (breathing, slight body shifts) without any distinct hand/arm offsets, pending a future pose redesign.
   - Ensured THINKING state correctly transitions back to IDLE on error or empty response without crashing the animation cycle.
   - Fixed expression persistence bug: emotions are now treated as temporary responses that naturally reset back to the normal IDLE baseline expression when TALKING ends or errors out.
-  
-  - Added dedicated GPT-SoVITS v2Pro API configuration at `GPT_SoVITS/configs/ada_v2pro.yaml`.
-  - Configured the GPT-SoVITS API to use `s1v3.ckpt` and `v2Pro/s2Gv2Pro.pth`.
-  - Configured the API for CPU inference to avoid exhausting the RTX 3050's limited VRAM while llama.cpp is also used by Ada.
+  - Added 3D model mouse interaction (click-and-drag to rotate/pan/zoom) using `OrbitControls`, which automatically and smoothly returns the avatar to the default front-facing camera angle after interaction stops.
+
+- **Phase 8: Animation Retargeting Fix (Global Slant)**
+  - Diagnosed and fixed the global slant where Ada appeared tilted during Mixamo FBX animations.
+  - **Root cause (verified from FBX binary data):** The FBX skeleton contains a `Root` bone with `Lcl Rotation = [90°, 0, 0]` and `J_Bip_C_Hips` with `Lcl Rotation = [7.21°, 0, 0]`. After Three.js FBXLoader processes the scene, the Hips node's world quaternion is ~Q(97.2°) and its parent (Root) world quaternion is Q(90°). The animation track for Hips stores absolute local Euler values, so its value at rest = Q(7.21°).
+  - **Root cause of previous implementation bug:** A prior attempted fix incorrectly exempted the Hips bone from the `restRotationInverse` step in the retargeting formula. The intended formula is `Q_out = parentRestWorldQ × Q_track × restWorldQ⁻¹`. Skipping the final multiplication for Hips produced `Q_out = Q(90°) × Q(7.21°) = Q(97.2°)`, which leaked the full ~97° pitch into the VRM normalized hips bone — causing the global forward slant.
+  - **Fix applied:** Removed the special Hips exemption. The uniform formula `Q_out = parentRestWorldQ × Q_track × restWorldQ⁻¹` is now applied to ALL bones. This correctly cancels the rest-pose offset at every bone: at rest, Q_out = identity (T-pose); during animation, Q_out = only the intended motion delta.
+  - Mathematically verified: at Hips rest (t=0), the formula produces exactly identity; during animation, it correctly produces only the delta from rest pose.
 
 ### Verified
 - GPT-SoVITS v2Pro API successfully starts on `127.0.0.1:9880`.

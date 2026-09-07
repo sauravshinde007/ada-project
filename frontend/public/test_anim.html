@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ada Animation Retargeting Test</title>
+  <style>
+    body { background: #0a0a0a; color: #00ff88; font-family: monospace; margin: 0; padding: 0; }
+    canvas { display: block; }
+    #overlay { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 6px; font-size: 13px; max-width: 400px; z-index: 100; }
+    #status { font-size: 16px; font-weight: bold; margin-bottom: 8px; }
+    #checks { line-height: 1.8; }
+    .pass { color: #00ff88; }
+    .fail { color: #ff4444; }
+    .warn { color: #ffaa00; }
+    #controls { position: fixed; bottom: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 10px; border-radius: 6px; }
+    button { background: #333; color: #0f0; border: 1px solid #0f0; padding: 5px 12px; margin: 3px; cursor: pointer; font-family: monospace; }
+    button:hover { background: #0f0; color: #000; }
+  </style>
+</head>
+<body>
+<div id="overlay">
+  <div id="status">🔄 Loading...</div>
+  <div id="checks"></div>
+</div>
+<div id="controls">
+  <button onclick="testAnim('/ada_default_anim/Standing_Idle.fbx')">Standing_Idle</button>
+  <button onclick="testAnim('/ada_default_anim/Happy.fbx')">Happy</button>
+  <button onclick="testAnim('/ada_default_anim/Talking.fbx')">Talking</button>
+  <button onclick="testAnim('/ada_default_anim/Angry.fbx')">Angry</button>
+  <button onclick="testAnim('/ada_default_anim/Thinking.fbx')">Thinking</button>
+  <button onclick="stopAnim()">Stop (T-pose)</button>
+</div>
+
+<script type="module">
+import * as THREE from '/node_modules/three/build/three.module.js';
+import { FBXLoader } from '/node_modules/three/examples/jsm/loaders/FBXLoader.js';
+import { GLTFLoader } from '/node_modules/three/examples/jsm/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '/node_modules/@pixiv/three-vrm/lib/three-vrm.module.js';
+
+const statusEl = document.getElementById('status');
+const checksEl = document.getElementById('checks');
+
+function check(label, value, expected, tolerance = 0.1) {
+  const pass = Math.abs(value - expected) <= tolerance;
+  const color = pass ? 'pass' : 'fail';
+  checksEl.innerHTML += `<div class="${color}">${pass ? '✓' : '✗'} ${label}: ${value.toFixed(3)} (expected ~${expected})</div>`;
+  return pass;
+}
+
+function note(msg) {
+  checksEl.innerHTML += `<div class="warn">ℹ ${msg}</div>`;
+}
+
+// Scene setup
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a2e);
+
+const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 20);
+camera.position.set(0, 1.4, 1.8);
+camera.lookAt(0, 1.3, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+light.position.set(1, 1, 1).normalize();
+scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+// Grid for orientation reference
+const grid = new THREE.GridHelper(2, 10, 0x444444, 0x222222);
+scene.add(grid);
+
+// Origin axes reference
+const axesHelper = new THREE.AxesHelper(0.3);
+axesHelper.position.y = 0;
+scene.add(axesHelper);
+
+let vrm = null;
+let mixer = null;
+let currentAction = null;
+const clock = new THREE.Clock();
+
+// Load VRM
+statusEl.textContent = '🔄 Loading VRM...';
+const gltfLoader = new GLTFLoader();
+gltfLoader.register(p => new VRMLoaderPlugin(p));
+
+gltfLoader.load('/models/ada-vrm-1.0.vrm', (gltf) => {
+  vrm = gltf.userData.vrm;
+  scene.add(vrm.scene);
+  mixer = new THREE.AnimationMixer(vrm.scene);
+  
+  statusEl.textContent = '✅ VRM Loaded - checking orientation...';
+  
+  // Check initial VRM orientation (should be upright before animation)
+  const _v3 = new THREE.Vector3();
+  const hipsNode = vrm.humanoid?.getNormalizedBoneNode('hips');
+  const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+  
+  if (hipsNode && headNode) {
+    hipsNode.getWorldPosition(_v3);
+    const hipsY = _v3.y;
+    headNode.getWorldPosition(_v3);
+    const headY = _v3.y;
+    
+    checksEl.innerHTML = '<div style="color:#0ff;font-weight:bold">PRE-ANIMATION CHECKS</div>';
+    check('Hips Y position (should be ~1.0 for standing)', hipsY, 1.0, 0.3);
+    check('Head Y > Hips Y (upright)', headY - hipsY, 0.6, 0.3);
+    
+    // Check that head is above hips (not pitched forward)
+    const hipsQ = new THREE.Quaternion();
+    hipsNode.getWorldQuaternion(hipsQ);
+    const euler = new THREE.Euler().setFromQuaternion(hipsQ, 'XYZ');
+    note(`Initial hips world rotation: X=${(euler.x*180/Math.PI).toFixed(1)}°, Y=${(euler.y*180/Math.PI).toFixed(1)}°, Z=${(euler.z*180/Math.PI).toFixed(1)}°`);
+  }
+  
+  statusEl.textContent = '✅ VRM Ready - load an animation to test';
+  note('Click an animation button to test retargeting');
+  
+  // Auto-load Standing_Idle
+  setTimeout(() => loadAndPlayAnimation('/ada_default_anim/Standing_Idle.fbx'), 500);
+}, undefined, (e) => {
+  statusEl.textContent = '❌ VRM load failed: ' + e.message;
+});
+
+async function loadAndPlayAnimation(url) {
+  if (!vrm || !mixer) return;
+  
+  statusEl.textContent = `🔄 Loading ${url.split('/').pop()}...`;
+  checksEl.innerHTML = '';
+  
+  try {
+    // Use our loadMixamoAnimation function (inline here for testing)
+    const clip = await loadMixamoAnim(url, vrm);
+    
+    if (currentAction) {
+      currentAction.stop();
+    }
+    
+    const action = mixer.clipAction(clip);
+    action.play();
+    currentAction = action;
+    
+    // Wait a few frames for the animation to apply
+    setTimeout(() => {
+      checkAnimationResult(url);
+    }, 200);
+    
+  } catch(e) {
+    statusEl.textContent = '❌ Animation failed: ' + e.message;
+    console.error(e);
+  }
+}
+
+function checkAnimationResult(url) {
+  const _v3 = new THREE.Vector3();
+  const _q = new THREE.Quaternion();
+  const _e = new THREE.Euler();
+  
+  const animName = url.split('/').pop();
+  checksEl.innerHTML = `<div style="color:#0ff;font-weight:bold">ANIMATION: ${animName}</div>`;
+  
+  const hipsNode = vrm.humanoid?.getNormalizedBoneNode('hips');
+  const headNode = vrm.humanoid?.getNormalizedBoneNode('head');
+  const leftFoot = vrm.humanoid?.getNormalizedBoneNode('leftFoot');
+  const rightFoot = vrm.humanoid?.getNormalizedBoneNode('rightFoot');
+  const neck = vrm.humanoid?.getNormalizedBoneNode('neck');
+  
+  if (hipsNode) {
+    hipsNode.getWorldPosition(_v3);
+    const hipsY = _v3.y;
+    const hipsX = _v3.x;
+    const hipsZ = _v3.z;
+    check('Hips Y > 0.5 (character standing, not on floor)', hipsY, 1.0, 0.5);
+    check('Hips X near 0 (not side-leaning)', Math.abs(hipsX), 0, 0.15);
+    
+    hipsNode.getWorldQuaternion(_q);
+    _e.setFromQuaternion(_q, 'XYZ');
+    const hipsPitchDeg = _e.x * 180 / Math.PI;
+    const hipsRollDeg = _e.z * 180 / Math.PI;
+    
+    // Hips should be roughly upright (small pitch/roll)
+    const pitchOk = Math.abs(hipsPitchDeg) < 20;
+    const rollOk = Math.abs(hipsRollDeg) < 15;
+    checksEl.innerHTML += `<div class="${pitchOk ? 'pass' : 'fail'}">${pitchOk ? '✓' : '✗'} Hips pitch: ${hipsPitchDeg.toFixed(1)}° (should be < 20°)</div>`;
+    checksEl.innerHTML += `<div class="${rollOk ? 'pass' : 'fail'}">${rollOk ? '✓' : '✗'} Hips roll: ${hipsRollDeg.toFixed(1)}° (should be < 15°)</div>`;
+  }
+  
+  if (headNode) {
+    headNode.getWorldPosition(_v3);
+    const headY = _v3.y;
+    check('Head Y > 1.4 (head is up high)', headY, 1.6, 0.4);
+    
+    headNode.getWorldQuaternion(_q);
+    _e.setFromQuaternion(_q, 'XYZ');
+    const headPitchDeg = _e.x * 180 / Math.PI;
+    const headOk = Math.abs(headPitchDeg) < 45;
+    checksEl.innerHTML += `<div class="${headOk ? 'pass' : 'fail'}">${headOk ? '✓' : '✗'} Head pitch: ${headPitchDeg.toFixed(1)}° (should be < 45°)</div>`;
+  }
+  
+  if (leftFoot && rightFoot) {
+    leftFoot.getWorldPosition(_v3);
+    const lfY = _v3.y;
+    rightFoot.getWorldPosition(_v3);
+    const rfY = _v3.y;
+    const feetOk = lfY < 0.4 && rfY < 0.4;
+    checksEl.innerHTML += `<div class="${feetOk ? 'pass' : 'fail'}">${feetOk ? '✓' : '✗'} Feet Y: L=${lfY.toFixed(2)}, R=${rfY.toFixed(2)} (should be < 0.4)</div>`;
+  }
+  
+  statusEl.textContent = '✅ Animation playing - check values above';
+  note('Head should be at top, feet at bottom. Animation should be moving.');
+}
+
+async function loadMixamoAnim(url, vrm) {
+  const loader = new FBXLoader();
+  return new Promise((resolve, reject) => {
+    loader.load(url, (asset) => {
+      if (!asset.animations || asset.animations.length === 0) {
+        reject(new Error('No animations'));
+        return;
+      }
+      
+      asset.updateMatrixWorld(true);
+      const animClip = asset.animations[0];
+      const tracks = [];
+      
+      const rawToNormalizedMap = new Map();
+      if (vrm.humanoid) {
+        Object.entries(vrm.humanoid.humanBones).forEach(([boneName, bone]) => {
+          if (!bone) return;
+          const rawNode = bone.node;
+          const normalizedNode = vrm.humanoid.getNormalizedBoneNode(boneName);
+          if (rawNode && normalizedNode) {
+            rawToNormalizedMap.set(rawNode.name, normalizedNode.name);
+          }
+        });
+      }
+      
+      const restRotationInverse = new THREE.Quaternion();
+      const parentRestWorldRotation = new THREE.Quaternion();
+      const _quatA = new THREE.Quaternion();
+      
+      animClip.tracks.forEach((track) => {
+        const parts = track.name.split('.');
+        const rigNodeName = parts[0];
+        const propName = parts[1];
+        
+        if (propName !== 'quaternion') return;
+        
+        if (rawToNormalizedMap.has(rigNodeName)) {
+          const targetNodeName = rawToNormalizedMap.get(rigNodeName);
+          const rigNode = asset.getObjectByName(rigNodeName);
+          
+          if (rigNode && rigNode.parent) {
+            // FIXED: Apply uniform correction to ALL bones including hips
+            rigNode.getWorldQuaternion(restRotationInverse).invert();
+            rigNode.parent.getWorldQuaternion(parentRestWorldRotation);
+            
+            const newValues = new Float32Array(track.values.length);
+            for (let i = 0; i < track.values.length; i += 4) {
+              _quatA.fromArray(track.values, i);
+              // No special case for hips - same formula for all bones
+              _quatA.premultiply(parentRestWorldRotation).multiply(restRotationInverse);
+              
+              if (vrm.meta?.metaVersion === '0') {
+                _quatA.x = -_quatA.x;
+                _quatA.z = -_quatA.z;
+              }
+              _quatA.toArray(newValues, i);
+            }
+            
+            tracks.push(new THREE.QuaternionKeyframeTrack(`${targetNodeName}.quaternion`, track.times, newValues));
+          }
+        }
+      });
+      
+      resolve(new THREE.AnimationClip('vrmAnimation', animClip.duration, tracks));
+    }, undefined, reject);
+  });
+}
+
+// Global functions for buttons
+window.testAnim = loadAndPlayAnimation;
+window.stopAnim = () => {
+  if (currentAction) {
+    currentAction.stop();
+    currentAction = null;
+    statusEl.textContent = '⏹ Animation stopped (T-pose)';
+    checksEl.innerHTML = '';
+    note('Animation stopped - character should be in T-pose');
+  }
+};
+
+// Animation loop
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
+  if (mixer) mixer.update(delta);
+  if (vrm) vrm.update(delta);
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

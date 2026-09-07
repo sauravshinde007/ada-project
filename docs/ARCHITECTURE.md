@@ -353,4 +353,32 @@ LLM text ──► TTS Preprocessor ──► TTS Provider
                          Audio Output         Avatar Talking
 ```
 
-The first implementation can use one reference voice. Emotion-specific reference clips and speaking-style presets can be introduced later.
+  The first implementation can use one reference voice. Emotion-specific reference clips and speaking-style presets can be introduced later.
+
+## Animation Architecture
+
+The avatar supports skeletal animations by filtering and retargeting FBX animations onto the standard VRM humanoid skeleton.
+
+```text
+FBX Animation
+        ↓
+loadMixamoAnimation
+        │ Discard .position and .scale tracks (prevent mesh deformation)
+        │ Map raw FBX bone names (J_Bip_*) to VRM normalized bones
+        │ Apply mathematical rest-pose correction:
+        │ Q_corrected = Q_parentRestWorld * Q_animTrack * (Q_nodeRestWorld)^-1
+        ↓
+THREE.AnimationClip (quaternion tracks only)
+        ↓
+THREE.AnimationMixer (on vrm.scene)
+        ↓
+VRMHumanoid (Normalized Bones)
+```
+
+- **Rest-Pose Retargeting:** A uniform rest-pose correction is applied to every bone:
+  `Q_out = parentRestWorldQ × Q_track × restWorldQ⁻¹`
+  This extracts only the delta rotation from the FBX rest pose. At the rest pose, the output is identity (VRM T-pose); during animation, the output is the motion delta only. No special-casing for any bone.
+- **Root Cause of Previous Slant:** The FBX skeleton has a `Root` bone with 90° X rotation and `J_Bip_C_Hips` with 7.21° X rotation at rest. The combined world quaternion is ~97°. An earlier attempted fix incorrectly exempted Hips from the `restWorldQ⁻¹` step, which leaked the full ~97° pitch into the VRM normalized hips — causing the global forward slant. The uniform formula cancels this exactly at rest.
+- Procedural idles (breathing/swaying) are overridden when a full-body skeletal animation is active.
+- Procedural `lookAt` (gaze tracking) and expression overrides (talking lip-sync, emotion) run *after* the `AnimationMixer` updates, allowing dynamic facial expressions to override baked animation tracks.
+
