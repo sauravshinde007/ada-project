@@ -375,6 +375,8 @@ THREE.AnimationMixer (on vrm.scene)
 VRMHumanoid (Normalized Bones)
 ```
 
+- **Rest-Pose Retargeting:** A robust mathematical delta is computed between the FBX source rig's arbitrary rest posture (usually A-pose) and the VRM's normalized T-pose. 
+- **Root Orientation & Balance:** To prevent a global slant, the `Hips` bone is treated uniquely. The `restRotationInverse` is skipped for the Hips to preserve the absolute world orientation of the Mixamo root, maintaining the structural balance intended by the animation. All position tracks are filtered out to prevent mesh deformation.
 - **Rest-Pose Retargeting:** A uniform rest-pose correction is applied to every bone:
   `Q_out = parentRestWorldQ × Q_track × restWorldQ⁻¹`
   This extracts only the delta rotation from the FBX rest pose. At the rest pose, the output is identity (VRM T-pose); during animation, the output is the motion delta only. No special-casing for any bone.

@@ -1,12 +1,21 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { VRMLoaderPlugin, VRM } from '@pixiv/three-vrm';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export class AvatarController {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
+  private controls: OrbitControls;
+  private isInteracting: boolean = false;
+  private interactionTimeout: number | null = null;
+  private defaultCameraPosition = new THREE.Vector3(0, 1.4, 1.2);
+  private defaultCameraTarget = new THREE.Vector3(0, 1.3, 0);
   private currentVrm: VRM | null = null;
+  private mixer: THREE.AnimationMixer | null = null;
+  private animations: Record<string, THREE.AnimationClip> = {};
+  private currentAction: THREE.AnimationAction | null = null;
   private clock: THREE.Clock;
   private animationFrameId: number | null = null;
   private blinkTimeout: number | null = null;
@@ -26,20 +35,45 @@ export class AvatarController {
     this.scene = new THREE.Scene();
     
     // Setup camera
-    this.camera = new THREE.PerspectiveCamera(35, container.clientWidth / container.clientHeight, 0.1, 20);
-    this.camera.position.set(0, 1.4, 1.2); // Focus on upper body / face, zoomed in
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    this.camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 20.0);
+    this.camera.position.copy(this.defaultCameraPosition);
+    // Tilt the camera's up vector slightly to the left to counteract the model's tilt
+    this.camera.up.set(-0.08, 0.996, 0).normalize();
 
     // Setup renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setSize(container.clientWidth, container.clientHeight);
+    this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    this.renderer.setSize(width, height);
     this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.container.appendChild(this.renderer.domElement);
+
+    // Setup controls
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.target.copy(this.defaultCameraTarget);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.05;
+    this.controls.maxPolarAngle = Math.PI / 1.5;
+    this.controls.minDistance = 0.5;
+    this.controls.maxDistance = 5;
+
+    this.controls.addEventListener('start', () => {
+      this.isInteracting = true;
+      if (this.interactionTimeout !== null) {
+        window.clearTimeout(this.interactionTimeout);
+      }
+    });
+
+    this.controls.addEventListener('end', () => {
+      this.interactionTimeout = window.setTimeout(() => {
+        this.isInteracting = false;
+      }, 2000);
+    });
     
     // Modern Three.js color space configuration
     if ('outputColorSpace' in this.renderer) {
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     }
-
-    container.appendChild(this.renderer.domElement);
 
     // Setup lighting
     const light = new THREE.DirectionalLight(0xffffff, Math.PI);
@@ -81,8 +115,10 @@ export class AvatarController {
             this.scene.remove(this.currentVrm.scene);
           }
 
-          vrm.scene.position.y = 0;
-          vrm.scene.rotation.y = 0;
+          this.currentVrm = vrm;
+          console.log(`META VERSION: ${vrm.meta?.metaVersion}`);
+          this.scene.add(vrm.scene);
+          this.mixer = new THREE.AnimationMixer(vrm.scene);
 
           // Put into a relaxed idle pose instead of T-pose
           if (vrm.humanoid) {
@@ -92,9 +128,6 @@ export class AvatarController {
             if (leftUpperArm) leftUpperArm.rotation.z = -1.2;
             if (rightUpperArm) rightUpperArm.rotation.z = 1.2;
           }
-
-          this.currentVrm = vrm;
-          this.scene.add(vrm.scene);
 
           // Return available expressions
           let expressionNames: string[] = [];
@@ -138,11 +171,36 @@ export class AvatarController {
     }
   }
 
-  public playAnimation(name: string): void {
-    // Abstraction for future skeletal animation implementation
-    if (name && name !== 'neutral') {
-      console.log(`[AvatarController] Animation requested: ${name} (Not fully implemented yet)`);
+  public async loadAnimation(url: string, name: string): Promise<void> {
+    if (!this.currentVrm) return;
+    try {
+      const { loadMixamoAnimation } = await import('./loadMixamoAnimation');
+      const clip = await loadMixamoAnimation(url, this.currentVrm);
+      clip.name = name;
+      this.animations[name] = clip;
+    } catch (err) {
+      console.error(`Failed to load animation ${name} from ${url}:`, err);
     }
+  }
+
+  public playAnimation(name: string): void {
+    if (!this.mixer || !this.animations[name]) {
+      if (name && name !== 'neutral') {
+        console.log(`[AvatarController] Animation requested: ${name} (Not fully implemented yet or not loaded)`);
+      }
+      return;
+    }
+    
+    const clip = this.animations[name];
+    const newAction = this.mixer.clipAction(clip);
+    
+    if (this.currentAction && this.currentAction !== newAction) {
+       this.currentAction.crossFadeTo(newAction, 0.5, true);
+       this.currentAction.stop();
+    }
+    
+    newAction.play();
+    this.currentAction = newAction;
   }
 
   public setTalking(talking: boolean): void {
@@ -209,7 +267,16 @@ export class AvatarController {
     
     const delta = this.clock.getDelta();
 
+    if (!this.isInteracting && this.controls) {
+      this.camera.position.lerp(this.defaultCameraPosition, delta * 3.0);
+      this.controls.target.lerp(this.defaultCameraTarget, delta * 3.0);
+    }
+    if (this.controls) {
+      this.controls.update();
+    }
+
     if (this.currentVrm) {
+      this.mixer?.update(delta);
       const time = this.clock.getElapsedTime();
       
       if (this.currentVrm.humanoid) {
@@ -217,84 +284,97 @@ export class AvatarController {
         const spine = this.currentVrm.humanoid.getNormalizedBoneNode('spine');
         const chest = this.currentVrm.humanoid.getNormalizedBoneNode('chest');
         const neck = this.currentVrm.humanoid.getNormalizedBoneNode('neck');
+        
         const leftShoulder = this.currentVrm.humanoid.getNormalizedBoneNode('leftShoulder');
         const rightShoulder = this.currentVrm.humanoid.getNormalizedBoneNode('rightShoulder');
+        
         const leftUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('leftUpperArm');
-        const rightUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightUpperArm');
         const leftLowerArm = this.currentVrm.humanoid.getNormalizedBoneNode('leftLowerArm');
-        const rightLowerArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightLowerArm');
         const leftHand = this.currentVrm.humanoid.getNormalizedBoneNode('leftHand');
+        
+        const rightUpperArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightUpperArm');
+        const rightLowerArm = this.currentVrm.humanoid.getNormalizedBoneNode('rightLowerArm');
         const rightHand = this.currentVrm.humanoid.getNormalizedBoneNode('rightHand');
 
-        // Complex time variables to avoid perfectly repeating loops
-        const t1 = time * 0.5;
-        const t2 = time * 0.31;
-        const t3 = time * 0.73;
-        const breath = Math.sin(time * 1.5);
-
+        // Thinking state uses standard idle body but looks away slightly (handled in gaze tracking)
+        // More active states could speed up breathing or change posture
+        let breathRate = 1.0;
+        if (this.isThinking || this.isTalking) {
+            breathRate = 1.5;
+        }
+        
+        // Procedural breathing / subtle body sway
+        const t1 = time * breathRate;
+        const t2 = time * 0.8 * breathRate;
+        const t3 = time * 0.6 * breathRate;
+        
+        // Smoothly interpolate breath weight
         this.thinkingWeight = THREE.MathUtils.lerp(
           this.thinkingWeight,
-          this.isThinking && !this.isTalking ? 1 : 0,
+          (this.isThinking && !this.isTalking) ? 1.0 : 0.0,
           delta * 4.0
         );
 
-        if (hips) {
-          // Small natural body/weight shifts
-          hips.rotation.z = Math.cos(time * 0.25) * 0.01;
-          hips.rotation.y = Math.sin(time * 0.15) * 0.02;
-        }
+        const breath = Math.sin(t1) * 0.5 + 0.5;
 
-        if (spine) {
-          // Subtle body movement and breathing pitch
-          spine.rotation.x = breath * 0.015 + Math.sin(t2) * 0.01;
-          spine.rotation.y = Math.sin(t1) * 0.015;
-          spine.rotation.z = Math.cos(t3) * 0.01;
-        }
+        if (!this.currentAction) {
+          if (hips) {
+            // Small natural body/weight shifts
+            hips.rotation.z = Math.cos(time * 0.25) * 0.01;
+            hips.rotation.y = Math.sin(time * 0.15) * 0.02;
+          }
 
-        if (chest) {
-          // Chest expansion for breathing
-          chest.scale.set(
-            1 + breath * 0.01,
-            1 + breath * 0.01,
-            1 + breath * 0.02
-          );
-        }
+          if (spine) {
+            // Subtle body movement and breathing pitch
+            spine.rotation.x = breath * 0.015 + Math.sin(t2) * 0.01;
+            spine.rotation.y = Math.sin(t1) * 0.015;
+            spine.rotation.z = Math.cos(t3) * 0.01;
+          }
 
-        if (neck) {
-          // Slight neck/head idle motion
-          neck.rotation.x = Math.sin(t1 * 1.2) * 0.01;
-          neck.rotation.y = Math.cos(t2 * 1.1) * 0.01;
-          neck.rotation.z = Math.sin(t3 * 0.9) * 0.01;
-        }
+          if (chest) {
+            // Chest expansion for breathing
+            chest.scale.set(
+              1 + breath * 0.01,
+              1 + breath * 0.01,
+              1 + breath * 0.02
+            );
+          }
 
-        if (leftShoulder) {
-          // Subtle shoulder breathing shrug
-          leftShoulder.rotation.z = breath * 0.01 + 0.02;
-        }
-        
-        if (rightShoulder) {
-          rightShoulder.rotation.z = -breath * 0.01 - 0.02;
-        }
+          if (neck) {
+            // Slight neck/head idle motion
+            neck.rotation.x = Math.sin(t1 * 1.2) * 0.01;
+            neck.rotation.y = Math.cos(t2 * 1.1) * 0.01;
+            neck.rotation.z = Math.sin(t3 * 0.9) * 0.01;
+          }
 
-        if (leftUpperArm && leftLowerArm && leftHand && rightUpperArm && rightLowerArm && rightHand) {
-          // --- IDLE POSE ---
-          // Currently, THINKING state visually just uses the IDLE pose.
-          const idlePose = {
-            leftUpperArm: { x: Math.sin(time * 1.1) * 0.02, y: 0, z: -1.2 + Math.sin(time * 0.8) * 0.02 },
-            leftLowerArm: { x: 0, y: 0, z: 0 },
-            leftHand: { x: 0, y: 0, z: 0 },
-            rightUpperArm: { x: Math.sin(time * 1.1) * 0.02, y: 0, z: 1.2 - Math.sin(time * 0.8) * 0.02 },
-            rightLowerArm: { x: 0, y: 0, z: 0 },
-            rightHand: { x: 0, y: 0, z: 0 }
-          };
-
-          leftUpperArm.rotation.set(idlePose.leftUpperArm.x, idlePose.leftUpperArm.y, idlePose.leftUpperArm.z);
-          leftLowerArm.rotation.set(idlePose.leftLowerArm.x, idlePose.leftLowerArm.y, idlePose.leftLowerArm.z);
-          leftHand.rotation.set(idlePose.leftHand.x, idlePose.leftHand.y, idlePose.leftHand.z);
+          if (leftShoulder) {
+            // Subtle shoulder breathing shrug
+            leftShoulder.rotation.z = breath * 0.01 + 0.02;
+          }
           
-          rightUpperArm.rotation.set(idlePose.rightUpperArm.x, idlePose.rightUpperArm.y, idlePose.rightUpperArm.z);
-          rightLowerArm.rotation.set(idlePose.rightLowerArm.x, idlePose.rightLowerArm.y, idlePose.rightLowerArm.z);
-          rightHand.rotation.set(idlePose.rightHand.x, idlePose.rightHand.y, idlePose.rightHand.z);
+          if (rightShoulder) {
+            rightShoulder.rotation.z = -breath * 0.01 - 0.02;
+          }
+
+          if (leftUpperArm && leftLowerArm && leftHand && rightUpperArm && rightLowerArm && rightHand) {
+            // --- IDLE POSE ---
+            const idlePose = {
+              leftUpperArm: { x: Math.sin(time * 1.1) * 0.02, y: 0, z: -1.2 + Math.sin(time * 0.8) * 0.02 },
+              leftLowerArm: { x: 0, y: 0, z: 0 },
+              leftHand: { x: 0, y: 0, z: 0 },
+              rightUpperArm: { x: Math.sin(time * 1.1) * 0.02, y: 0, z: 1.2 - Math.sin(time * 0.8) * 0.02 },
+              rightLowerArm: { x: 0, y: 0, z: 0 },
+              rightHand: { x: 0, y: 0, z: 0 }
+            };
+
+            leftUpperArm.rotation.set(idlePose.leftUpperArm.x, idlePose.leftUpperArm.y, idlePose.leftUpperArm.z);
+            leftLowerArm.rotation.set(idlePose.leftLowerArm.x, idlePose.leftLowerArm.y, idlePose.leftLowerArm.z);
+            leftHand.rotation.set(idlePose.leftHand.x, idlePose.leftHand.y, idlePose.leftHand.z);
+            
+            rightUpperArm.rotation.set(idlePose.rightUpperArm.x, idlePose.rightUpperArm.y, idlePose.rightUpperArm.z);
+            rightLowerArm.rotation.set(idlePose.rightLowerArm.x, idlePose.rightLowerArm.y, idlePose.rightLowerArm.z);
+            rightHand.rotation.set(idlePose.rightHand.x, idlePose.rightHand.y, idlePose.rightHand.z);
+          }
         }
       }
 
@@ -361,7 +441,14 @@ export class AvatarController {
     if (this.blinkTimeout !== null) {
       clearTimeout(this.blinkTimeout);
     }
+    if (this.interactionTimeout !== null) {
+      window.clearTimeout(this.interactionTimeout);
+    }
     window.removeEventListener('resize', this.resize);
+    
+    if (this.controls) {
+      this.controls.dispose();
+    }
     
     if (this.renderer) {
       this.renderer.dispose();

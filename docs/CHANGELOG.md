@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fixed expression persistence bug: emotions are now treated as temporary responses that naturally reset back to the normal IDLE baseline expression when TALKING ends or errors out.
   - Added 3D model mouse interaction (click-and-drag to rotate/pan/zoom) using `OrbitControls`, which automatically and smoothly returns the avatar to the default front-facing camera angle after interaction stops.
 
+- **Phase 8: Animation (Rotation-Only Retargeting Fix)**
+  - Diagnosed a global slant issue where Ada appeared tilted backward during Mixamo FBX animations.
+  - Traced the root cause to a rest-pose mismatch on the `J_Bip_C_Hips` bone: the Mixamo source rig has a structural 7.2-degree pitch at rest.
+  - Applied the smallest mathematical correction: explicitly exempted the VRM `hips` bone from the `restRotationInverse` multiplication. This preserves the absolute world orientation of the Mixamo root, allowing the legs and spine (which are animated relative to that pitched hip) to remain perfectly vertical, eliminating the slant without introducing mesh deformation or hardcoded offsets.
+  - Configured the GPT-SoVITS API to use `s1v3.ckpt` and `v2Pro/s2Gv2Pro.pth`.
+  - Configured the API for CPU inference to avoid exhausting the RTX 3050's limited VRAM while llama.cpp is also used by Ada.
 - **Phase 8: Animation Retargeting Fix (Global Slant)**
   - Diagnosed and fixed the global slant where Ada appeared tilted during Mixamo FBX animations.
   - **Root cause (verified from FBX binary data):** The FBX skeleton contains a `Root` bone with `Lcl Rotation = [90°, 0, 0]` and `J_Bip_C_Hips` with `Lcl Rotation = [7.21°, 0, 0]`. After Three.js FBXLoader processes the scene, the Hips node's world quaternion is ~Q(97.2°) and its parent (Root) world quaternion is Q(90°). The animation track for Hips stores absolute local Euler values, so its value at rest = Q(7.21°).
@@ -99,3 +105,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Current Milestone
 
 **Phase 7: Voice / TTS — TTS engine installed and verified; integration and emotion-aware speech are next.**
+
+- **Phase 8: Response-Aware Animations**
+  - Updated `SystemPrompt.ts` to instruct the LLM to output specific animation states alongside emotions (Angry, Explaining, Talking, Bashful, Happy, Rejected, Thankful, idle).
+  - Preloaded all corresponding Mixamo `.fbx` files in `VRMAvatar.tsx` on initialization.
+  - Implemented seamless state transition: `idle` -> `Thinking` (when generating response) -> selected animation (when talking) -> `idle` (when done).
+  - Reverted `loadMixamoAnimation.ts` math back to the standard formula, and added the missing `mixamoVRMRigMap` to properly map Mixamo bones (e.g., `mixamorigLeftArm`) to Ada's VRM normalized bones.
+  - Offset the camera slightly to the side to create a more dynamic 3/4 angled portrait framing.
+  - Applied a permanent Z-axis camera roll (using the `up` vector) to perfectly counter the model's visual tilt caused by asymmetrical idle poses.

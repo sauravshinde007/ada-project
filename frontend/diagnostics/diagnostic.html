@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>FBX/VRM Diagnostic</title>
+  <style>
+    body { background: #111; color: #0f0; font-family: monospace; padding: 20px; }
+    pre { white-space: pre-wrap; word-break: break-all; }
+    h2 { color: #ff0; }
+    .err { color: #f66; }
+  </style>
+</head>
+<body>
+  <h2>FBX + VRM Retargeting Diagnostic</h2>
+  <div id="status">Loading...</div>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import * as THREE from '/node_modules/three/build/three.module.js';
+    import { FBXLoader } from '/node_modules/three/examples/jsm/loaders/FBXLoader.js';
+    import { GLTFLoader } from '/node_modules/three/examples/jsm/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin } from '/node_modules/@pixiv/three-vrm/lib/three-vrm.module.js';
+
+    const output = document.getElementById('output');
+    const status = document.getElementById('status');
+
+    function log(...args) {
+      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+      output.textContent += msg + '\n';
+      console.log(...args);
+    }
+
+    function logQ(label, q) {
+      const euler = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+      log(`  ${label}: q(${q.x.toFixed(5)}, ${q.y.toFixed(5)}, ${q.z.toFixed(5)}, ${q.w.toFixed(5)}) | euler(${(euler.x*180/Math.PI).toFixed(3)}°, ${(euler.y*180/Math.PI).toFixed(3)}°, ${(euler.z*180/Math.PI).toFixed(3)}°)`);
+    }
+
+    async function run() {
+      try {
+        // ====== Load FBX ======
+        log('=== Loading FBX: Standing_Idle.fbx ===');
+        const fbxLoader = new FBXLoader();
+        const fbxAsset = await new Promise((res, rej) => {
+          fbxLoader.load('/ada_default_anim/Standing_Idle.fbx', res, undefined, rej);
+        });
+
+        fbxAsset.updateMatrixWorld(true);
+        log(`FBX loaded, children: ${fbxAsset.children.length}`);
+        log(`FBX animations: ${fbxAsset.animations.length}`);
+        if (fbxAsset.animations.length > 0) {
+          log(`  First clip name: "${fbxAsset.animations[0].name}", duration: ${fbxAsset.animations[0].duration}s`);
+          log(`  Track count: ${fbxAsset.animations[0].tracks.length}`);
+          
+          // Show first 10 track names and types
+          log('\n  First 15 tracks:');
+          fbxAsset.animations[0].tracks.slice(0, 15).forEach(t => {
+            const firstVals = Array.from(t.values.slice(0, 4)).map(v => v.toFixed(4)).join(', ');
+            log(`    "${t.name}" | values[0:4]: [${firstVals}]`);
+          });
+        }
+
+        // ====== FBX Root hierarchy ======
+        log('\n=== FBX Scene Hierarchy (depth 3) ===');
+        function printTree(obj, depth) {
+          if (depth > 3) return;
+          const indent = '  '.repeat(depth);
+          const q = obj.quaternion;
+          const euler = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+          log(`${indent}[${obj.type}] "${obj.name}" | local q: (${q.x.toFixed(3)}, ${q.y.toFixed(3)}, ${q.z.toFixed(3)}, ${q.w.toFixed(3)}) | euler: (${(euler.x*180/Math.PI).toFixed(1)}°, ${(euler.y*180/Math.PI).toFixed(1)}°, ${(euler.z*180/Math.PI).toFixed(1)}°)`);
+          for (const child of obj.children) {
+            printTree(child, depth + 1);
+          }
+        }
+        printTree(fbxAsset, 0);
+
+        // ====== Key bone world/local quaternions ======
+        log('\n=== FBX Key Bone Quaternions (after FBXLoader processing) ===');
+        const KEY_BONES = ['J_Bip_C_Hips', 'J_Bip_C_Spine', 'J_Bip_C_Spine1', 'J_Bip_C_Spine2',
+                           'J_Bip_C_Neck', 'J_Bip_C_Head',
+                           'J_Bip_L_UpperLeg', 'J_Bip_R_UpperLeg',
+                           'J_Bip_L_LowerLeg', 'J_Bip_R_LowerLeg',
+                           'J_Bip_L_Foot', 'J_Bip_R_Foot'];
+        
+        const _wq = new THREE.Quaternion();
+        for (const name of KEY_BONES) {
+          const node = fbxAsset.getObjectByName(name);
+          if (!node) { log(`  [MISSING] ${name}`); continue; }
+          log(`\n  Bone: "${name}"`);
+          log('  Local:'); logQ('quaternion', node.quaternion);
+          node.getWorldQuaternion(_wq);
+          log('  World:'); logQ('quaternion', _wq);
+          if (node.parent) {
+            log('  Parent: ' + node.parent.name);
+            const pq = new THREE.Quaternion();
+            node.parent.getWorldQuaternion(pq);
+            log('  Parent World:'); logQ('quaternion', pq);
+          }
+        }
+
+        // ====== Check Root node ======
+        const rootNode = fbxAsset.getObjectByName('Root') || fbxAsset.getObjectByName('root');
+        log('\n=== Root node ===');
+        if (rootNode) {
+          log(`  Found "Root" node`);
+          logQ('Local Q', rootNode.quaternion);
+          rootNode.getWorldQuaternion(_wq);
+          logQ('World Q', _wq);
+        } else {
+          log('  No "Root" node found at top level');
+          log('  FBX top-level children: ' + fbxAsset.children.map(c => c.name).join(', '));
+        }
+
+        // ====== FBX Animation Track inspection - first keyframe of key bones ======
+        log('\n=== FBX Animation Track First Keyframes ===');
+        const clip = fbxAsset.animations[0];
+        const hipsTrack = clip.tracks.find(t => t.name.includes('J_Bip_C_Hips'));
+        if (hipsTrack) {
+          log(`  Track: "${hipsTrack.name}"`);
+          log(`  Times[0]: ${hipsTrack.times[0]}`);
+          const vals = Array.from(hipsTrack.values.slice(0, 4));
+          const q = new THREE.Quaternion().fromArray(vals);
+          logQ('  First frame Q', q);
+        }
+
+        const spineTrack = clip.tracks.find(t => t.name.includes('J_Bip_C_Spine') && t.name.includes('quaternion'));
+        if (spineTrack) {
+          log(`\n  Track: "${spineTrack.name}"`);
+          const vals = Array.from(spineTrack.values.slice(0, 4));
+          const q = new THREE.Quaternion().fromArray(vals);
+          logQ('  First frame Q', q);
+        }
+
+        // ====== Load VRM ======
+        log('\n\n=== Loading VRM: ada-vrm-1.0.vrm ===');
+        const gltfLoader = new GLTFLoader();
+        gltfLoader.register(p => new VRMLoaderPlugin(p));
+        const gltf = await new Promise((res, rej) => {
+          gltfLoader.load('/models/ada-vrm-1.0.vrm', res, undefined, rej);
+        });
+        const vrm = gltf.userData.vrm;
+        log(`VRM loaded! Meta version: ${vrm.meta?.metaVersion}`);
+
+        // VRM humanoid normalized bones
+        log('\n=== VRM Normalized Bone Quaternions ===');
+        const VRM_BONE_NAMES = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+                                 'leftUpperLeg', 'rightUpperLeg', 'leftLowerLeg', 'rightLowerLeg',
+                                 'leftFoot', 'rightFoot', 'leftUpperArm', 'rightUpperArm'];
+        
+        for (const boneName of VRM_BONE_NAMES) {
+          const rawNode = vrm.humanoid.humanBones[boneName]?.node;
+          const normNode = vrm.humanoid.getNormalizedBoneNode(boneName);
+          if (!rawNode && !normNode) { log(`  [MISSING] ${boneName}`); continue; }
+          log(`\n  VRM Bone: "${boneName}"`);
+          if (rawNode) {
+            log('  Raw bone node: ' + rawNode.name);
+            logQ('  Raw Local', rawNode.quaternion);
+            rawNode.getWorldQuaternion(_wq);
+            logQ('  Raw World', _wq);
+          }
+          if (normNode) {
+            log('  Norm bone node: ' + normNode.name);
+            logQ('  Norm Local', normNode.quaternion);
+            normNode.getWorldQuaternion(_wq);
+            logQ('  Norm World', _wq);
+          }
+        }
+
+        // ====== Check rawToNormalizedMap ======
+        log('\n=== VRM humanoid bone name mapping ===');
+        if (vrm.humanoid) {
+          Object.entries(vrm.humanoid.humanBones).forEach(([boneName, bone]) => {
+            if (!bone) return;
+            const rawNode = bone.node;
+            const normNode = vrm.humanoid.getNormalizedBoneNode(boneName);
+            if (rawNode && normNode) {
+              log(`  VRM["${boneName}"] -> raw="${rawNode.name}" | norm="${normNode.name}"`);
+            }
+          });
+        }
+
+        // ====== Simulate retargeting for Hips ======
+        log('\n\n=== SIMULATING RETARGETING FOR J_Bip_C_Hips ===');
+        const hipsNode = fbxAsset.getObjectByName('J_Bip_C_Hips');
+        if (hipsNode && hipsTrack) {
+          const restRotInverse = new THREE.Quaternion();
+          const parentRestWorld = new THREE.Quaternion();
+          
+          hipsNode.getWorldQuaternion(restRotInverse);
+          log('  Hips world rest Q:'); logQ('', restRotInverse);
+          restRotInverse.invert();
+          log('  Hips world rest Q inverted:'); logQ('', restRotInverse);
+          
+          if (hipsNode.parent) {
+            hipsNode.parent.getWorldQuaternion(parentRestWorld);
+            log('  Hips parent world rest Q:'); logQ('', parentRestWorld);
+          }
+          
+          const firstFrameVals = Array.from(hipsTrack.values.slice(0, 4));
+          const qFrame = new THREE.Quaternion().fromArray(firstFrameVals);
+          log('\n  First frame Q from track:'); logQ('', qFrame);
+          
+          // Current code (WITH hips exemption)
+          const qWithExemption = qFrame.clone().premultiply(parentRestWorld);
+          log('\n  After premultiply(parentRestWorld) [no restRotInverse for hips]:'); logQ('', qWithExemption);
+          
+          // Without exemption (full correction)
+          const qWithFull = qFrame.clone().premultiply(parentRestWorld).multiply(restRotInverse);
+          log('\n  After full correction (premultiply parentRestWorld + multiply restRotInverse):'); logQ('', qWithFull);
+          
+          // Identity test - what if we use identity?
+          const qIdentity = qFrame.clone();
+          log('\n  Raw track Q (no correction):'); logQ('', qIdentity);
+        }
+
+        log('\n\n=== DIAGNOSTIC COMPLETE ===');
+        status.textContent = 'COMPLETE - check output above';
+        status.style.color = '#0f0';
+        
+      } catch(e) {
+        log('\n\nERROR: ' + e.message);
+        log(e.stack);
+        status.textContent = 'ERROR: ' + e.message;
+        status.style.color = '#f66';
+      }
+    }
+
+    run();
+  </script>
+</body>
+</html>
+

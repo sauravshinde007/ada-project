@@ -33,8 +33,33 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
 
     controller.load(modelUrl, (p) => {
       setProgress(p);
-    }).then((availableExpressions) => {
+    }).then(async (availableExpressions) => {
       setExpressions(availableExpressions);
+      
+      try {
+         const animsToLoad = [
+           { file: 'Standing_Idle.fbx', name: 'idle' },
+           { file: 'Thinking.fbx', name: 'Thinking' },
+           { file: 'Angry.fbx', name: 'Angry' },
+           { file: 'Explaining.fbx', name: 'Explaining' },
+           { file: 'Talking.fbx', name: 'Talking' },
+           { file: 'Bashful.fbx', name: 'Bashful' },
+           { file: 'Happy.fbx', name: 'Happy' },
+           { file: 'Rejected.fbx', name: 'Rejected' },
+           { file: 'Thankful.fbx', name: 'Thankful' }
+         ];
+         
+         const loadPromises = animsToLoad.map(a => 
+           controller.loadAnimation(`/ada_default_anim/${a.file}`, a.name)
+             .catch(err => console.warn(`Failed to load ${a.file}`, err))
+         );
+         
+         await Promise.all(loadPromises);
+         controller.playAnimation('idle');
+      } catch (err) {
+         console.warn("Failed to load animations", err);
+      }
+      
       setLoading(false);
     }).catch((err) => {
       console.error(err);
@@ -99,12 +124,18 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
   useEffect(() => {
     if (controllerRef.current) {
       controllerRef.current.setTalking(!!isTalking);
+      if (!isTalking && !isThinking) {
+        controllerRef.current.playAnimation('idle');
+      }
     }
-  }, [isTalking]);
+  }, [isTalking, isThinking]);
 
   useEffect(() => {
     if (controllerRef.current) {
       controllerRef.current.setThinking(!!isThinking);
+      if (isThinking) {
+        controllerRef.current.playAnimation('Thinking');
+      }
     }
   }, [isThinking]);
 
