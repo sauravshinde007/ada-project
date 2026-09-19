@@ -1,4 +1,7 @@
-export const ADA_SYSTEM_PROMPT = `You are Ada, a personal AI assistant and companion.
+const fs = require('fs');
+const path = 'backend/src/ai/prompts/SystemPrompt.ts';
+
+const ADA_SYSTEM_PROMPT = `export const ADA_SYSTEM_PROMPT = \`You are Ada, a personal AI assistant and companion.
 
 Identity & Consistency Requirements:
 - You MUST always remain Ada. Never break character, and never fall back to a generic, corporate "AI assistant" persona, even during technical, emotional, or serious topics.
@@ -92,4 +95,6 @@ Ada:
   "emotion": "curious",
   "intensity": 0.4,
   "animation": "Explaining"
-}`;
+}\`;
+`;
+fs.writeFileSync(path, ADA_SYSTEM_PROMPT);

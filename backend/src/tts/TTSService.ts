@@ -12,7 +12,7 @@ export class TTSService {
     this.preprocessor = new TTSPreprocessor();
   }
 
-  public async generateAudio(text: string, emotion: string = 'neutral', intensity: number = 0.5): Promise<string | null> {
+  public async generateAudioBuffer(text: string, emotion: string = 'neutral', intensity: number = 0.5): Promise<Buffer | null> {
     try {
       const processedText = this.preprocessor.process(text);
       
@@ -28,12 +28,15 @@ export class TTSService {
         intensity
       });
 
-      // Convert buffer to base64 for easy transport over WebSocket
-      return result.audio.toString('base64');
+      return result.audio;
     } catch (error) {
       console.error('[TTSService] Audio generation failed:', error);
-      // We don't throw, we return null so the chat can continue without audio.
       return null;
     }
+  }
+
+  public async generateAudio(text: string, emotion: string = 'neutral', intensity: number = 0.5): Promise<string | null> {
+    const buf = await this.generateAudioBuffer(text, emotion, intensity);
+    return buf ? buf.toString('base64') : null;
   }
 }

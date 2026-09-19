@@ -23,7 +23,8 @@ export class GPTSoVITSProvider implements TTSProvider {
       prompt_text: promptText,
       prompt_lang: promptLang,
       media_type: "wav",
-      streaming_mode: false
+      streaming_mode: false,
+      text_split_method: "cut1"
     };
 
     try {

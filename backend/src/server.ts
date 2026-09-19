@@ -36,6 +36,12 @@ wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
   const sessionId = Date.now().toString(); // Simple unique ID for the session/conversation
 
+  let t_reqStart: number = 0;
+  let t_qwenStart: number = 0;
+  let t_qwenEnd: number = 0;
+  let t_ttsStart: number = 0;
+  let t_ttsEnd: number = 0;
+
   const conversation: LLMMessage[] = [
     {
       role: 'system',
@@ -45,9 +51,21 @@ wss.on('connection', (ws: WebSocket) => {
 
   ws.on('message', async (message: string) => {
     try {
-      const data: WebSocketMessage = JSON.parse(message.toString());
+      const data: any = JSON.parse(message.toString());
+      if (data.type === 'latency_log') {
+        const t_playbackStart = data.payload.ts;
+        console.log(`\n\n=== LATENCY REPORT ===`);
+        console.log(`1. Qwen request -> complete: ${t_qwenEnd - t_qwenStart}ms`);
+        console.log(`2. Qwen complete -> TTS start: ${t_ttsStart - t_qwenEnd}ms`);
+        console.log(`3. TTS start -> TTS complete: ${t_ttsEnd - t_ttsStart}ms`);
+        console.log(`4. TTS complete -> Playback start: ${t_playbackStart - t_ttsEnd}ms`);
+        console.log(`5. TOTAL (User req -> Playback): ${t_playbackStart - t_reqStart}ms`);
+        console.log(`======================\n\n`);
+        return;
+      }
       
       if (data.type === 'chat_message') {
+        t_reqStart = Date.now();
         const userMsg = data.payload;
         console.log('Received message:', userMsg.text);
 
@@ -77,39 +95,80 @@ wss.on('connection', (ws: WebSocket) => {
         memoryService.saveConversationMessage(sessionId, 'user', userMsg.text);
 
         try {
-          const response = await llmProvider.generate({
-            messages: generationMessages as LLMMessage[]
-          });
+          t_qwenStart = Date.now();
+          
+          let fullResponseText = '';
+          let currentTextBuffer = '';
+          let ttsPromises: Promise<Buffer | null>[] = [];
+          let firstTokenTime = 0;
+          let firstAudioTime = 0;
+
+          const req = { messages: generationMessages as LLMMessage[] };
+          for await (const chunk of llmProvider.generateStream(req)) {
+            if (!firstTokenTime) {
+                firstTokenTime = Date.now();
+                console.log(`[LATENCY] 1. First LLM token: ${firstTokenTime - t_reqStart}ms`);
+            }
+            fullResponseText += chunk;
+            
+            const textMatch = fullResponseText.match(/"text"\s*:\s*"([^"]*)/);
+            if (textMatch) {
+                const currentExtracted = textMatch[1];
+                const newText = currentExtracted.substring(currentTextBuffer.length);
+                if (newText) {
+                    const matches = newText.match(/[^.?!]+[.?!]+/g);
+                    if (matches) {
+                        for (const sentence of matches) {
+                            const trimmed = sentence.trim();
+                            if (trimmed) {
+                                const p = ttsService.generateAudioBuffer(trimmed, 'neutral', 0.5);
+                                if (ttsPromises.length === 0) {
+                                    p.then(() => {
+                                        firstAudioTime = Date.now();
+                                        console.log(`[LATENCY] 2. First TTS audio chunk ready: ${firstAudioTime - t_reqStart}ms`);
+                                    });
+                                }
+                                ttsPromises.push(p);
+                                currentTextBuffer += sentence;
+                            }
+                        }
+                    }
+                }
+            }
+          }
+          t_qwenEnd = Date.now();
 
           let parsedResponse;
           try {
-            const jsonMatch = response.content.match(/\{[\s\S]*\}/);
-            const jsonString = jsonMatch ? jsonMatch[0] : response.content;
+            const jsonMatch = fullResponseText.match(/\{[\s\S]*\}/);
+            const jsonString = jsonMatch ? jsonMatch[0] : fullResponseText;
             parsedResponse = JSON.parse(jsonString);
           } catch (e) {
-            console.error('Failed to parse LLM response as JSON:', response.content);
-            parsedResponse = {
-              text: response.content,
-              emotion: 'neutral',
-              intensity: 0.0,
-              animation: 'neutral'
-            };
+            console.error('Failed to parse LLM response as JSON:', fullResponseText);
+            parsedResponse = { text: fullResponseText, emotion: 'neutral', intensity: 0.0, animation: 'neutral' };
           }
 
           if (!validateStructuredResponse(parsedResponse)) {
-             console.warn('Invalid structured response, using fallback format');
-             if (typeof parsedResponse.text !== 'string') {
-                parsedResponse.text = response.content;
-             }
+             if (typeof parsedResponse.text !== 'string') parsedResponse.text = fullResponseText;
              parsedResponse.emotion = 'neutral';
              parsedResponse.intensity = 0.0;
              parsedResponse.animation = 'neutral';
           }
 
-          conversation.push({
-            role: 'assistant',
-            content: JSON.stringify(parsedResponse)
-          });
+          const finalExtractedText = typeof parsedResponse.text === 'string' ? parsedResponse.text : '';
+          const leftover = finalExtractedText.substring(currentTextBuffer.length).trim();
+          if (leftover) {
+              const p = ttsService.generateAudioBuffer(leftover, parsedResponse.emotion, parsedResponse.intensity);
+              if (ttsPromises.length === 0) {
+                  p.then(() => {
+                      firstAudioTime = Date.now();
+                      console.log(`[LATENCY] 2. First TTS audio chunk ready: ${firstAudioTime - t_reqStart}ms`);
+                  });
+              }
+              ttsPromises.push(p);
+          }
+
+          conversation.push({ role: 'assistant', content: JSON.stringify(parsedResponse) });
           memoryService.saveConversationMessage(sessionId, 'assistant', JSON.stringify(parsedResponse));
 
           const responseMsg: ChatMessage = {
@@ -123,11 +182,28 @@ wss.on('connection', (ws: WebSocket) => {
           };
 
           try {
-            const audioBase64 = await ttsService.generateAudio(parsedResponse.text, parsedResponse.emotion, parsedResponse.intensity);
+            t_ttsStart = Date.now();
+            const buffers = await Promise.all(ttsPromises);
+            t_ttsEnd = Date.now();
+            
+            const validBuffers = buffers.filter(b => b !== null) as Buffer[];
+            let audioBase64: string | undefined = undefined;
+            if (validBuffers.length > 0) {
+                const chunks = [validBuffers[0]];
+                for (let i = 1; i < validBuffers.length; i++) {
+                    chunks.push(validBuffers[i].slice(44)); // Strip WAV header
+                }
+                const concatBuf = Buffer.concat(chunks);
+                concatBuf.writeUInt32LE(concatBuf.length - 8, 4); // ChunkSize
+                concatBuf.writeUInt32LE(concatBuf.length - 44, 40); // Subchunk2Size
+                audioBase64 = concatBuf.toString('base64');
+            }
             if (audioBase64) {
               responseMsg.audioData = audioBase64;
             }
           } catch (err) {
+            t_ttsEnd = Date.now();
+
             console.error('Failed to generate audio, continuing without TTS', err);
           }
 

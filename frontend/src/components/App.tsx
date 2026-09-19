@@ -112,7 +112,10 @@ function App() {
             key={msg.id}
             autoPlay 
             src={`data:audio/wav;base64,${msg.audioData}`} 
-            onPlay={() => { setIsTalking(true); setIsThinking(false); setSubtitleProgress(0); }}
+            onPlay={() => { 
+              ws.current?.send(JSON.stringify({ type: 'latency_log', payload: { event: 'playback_start', ts: Date.now(), msgId: msg.id } }));
+              setIsTalking(true); setIsThinking(false); setSubtitleProgress(0); 
+            }}
             onTimeUpdate={(e) => {
               if (e.currentTarget.duration) {
                 setSubtitleProgress(e.currentTarget.currentTime / e.currentTarget.duration);
