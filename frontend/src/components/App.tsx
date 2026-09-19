@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChatMessage, WebSocketMessage, WebSocketResponse } from '../../../shared/src/types/index';
 import { VRMAvatar } from '../avatar';
+import { Subtitles } from './Subtitles';
 import './App.css';
 
 function App() {
@@ -9,6 +10,7 @@ function App() {
   const [isChatOpen, setIsChatOpen] = useState(true);
   const [isTalking, setIsTalking] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
+  const [subtitleProgress, setSubtitleProgress] = useState(0);
   const ws = useRef<WebSocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -76,7 +78,7 @@ function App() {
 
   return (
     <div className="main-container">
-      <div className="avatar-section">
+      <div className="avatar-section-fullscreen">
         <VRMAvatar 
           modelUrl="/models/ada-vrm-1.0.vrm" 
           emotion={latestAdaMessage?.emotion}
@@ -86,61 +88,40 @@ function App() {
           isThinking={isThinking}
         />
       </div>
-      
-      <div className={`chat-section ${isChatOpen ? 'open' : 'closed'}`}>
-        <div className="chat-toggle-handle" onClick={() => setIsChatOpen(!isChatOpen)}>
-          <span>{isChatOpen ? '▶' : '◀'} Chat</span>
-        </div>
-        <div className="chat-content-wrapper">
-          <header className="chat-header">
-            <h2>Ada</h2>
-            <div className="status-indicator">
-              <span className={`status-dot ${ws.current?.readyState === WebSocket.OPEN ? 'online' : 'offline'}`}></span>
-              {ws.current?.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected'}
-            </div>
-          </header>
 
-          <div className="chat-messages">
-          {messages.length === 0 && (
-            <div className="empty-state">
-              <p>No messages yet. Say hello to Ada!</p>
-            </div>
-          )}
-          {messages.map((msg) => (
-            <div key={msg.id} className={`message-wrapper ${msg.sender}`}>
-              <div className={`message-bubble ${msg.sender}`}>
-                <span className="sender-name">{msg.sender === 'user' ? 'You' : 'Ada'}</span>
-                <p>{msg.text}</p>
-                {msg.audioData && (
-                  <audio 
-                    autoPlay 
-                    src={`data:audio/wav;base64,${msg.audioData}`} 
-                    style={{ display: 'none' }}
-                    onPlay={() => { setIsTalking(true); setIsThinking(false); }}
-                    onEnded={() => setIsTalking(false)}
-                    onError={() => { setIsTalking(false); setIsThinking(false); }}
-                  />
-                )}
-                <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-              </div>
-            </div>
-          ))}
-          <div ref={chatEndRef} />
-          </div>
+      {isTalking && latestAdaMessage && (
+        <Subtitles text={latestAdaMessage.text} progress={subtitleProgress} />
+      )}
 
-          <form className="chat-input-form" onSubmit={handleSend}>
-            <input
-              type="text"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Type your message..."
-              className="chat-input"
-            />
-            <button type="submit" className="send-button" disabled={!inputValue.trim()}>
-              Send
-            </button>
-          </form>
-        </div>
+      <div className="bottom-input-container">
+        <form className="glass-input-form" onSubmit={handleSend}>
+          <input
+            type="text"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            placeholder="Type a message..."
+            className="glass-input"
+          />
+        </form>
+      </div>
+
+      {/* Hidden audio tags for Ada's voice output */}
+      <div style={{ display: 'none' }}>
+        {messages.filter(m => m.sender === 'ada' && m.audioData).map((msg) => (
+          <audio 
+            key={msg.id}
+            autoPlay 
+            src={`data:audio/wav;base64,${msg.audioData}`} 
+            onPlay={() => { setIsTalking(true); setIsThinking(false); setSubtitleProgress(0); }}
+            onTimeUpdate={(e) => {
+              if (e.currentTarget.duration) {
+                setSubtitleProgress(e.currentTarget.currentTime / e.currentTarget.duration);
+              }
+            }}
+            onEnded={() => { setIsTalking(false); setSubtitleProgress(1); }}
+            onError={() => { setIsTalking(false); setIsThinking(false); }}
+          />
+        ))}
       </div>
     </div>
   );

@@ -1,0 +1,37 @@
+.subtitle-container {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  z-index: 2;
+  width: 80%;
+  max-width: 900px;
+  pointer-events: none;
+}
+
+.subtitle-text {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: white;
+  text-shadow: 
+    -2px -2px 0 #000,  
+     2px -2px 0 #000,
+    -2px  2px 0 #000,
+     2px  2px 0 #000,
+     0px  4px 8px rgba(0,0,0,0.5);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+}
+
+.subtitle-word {
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+
+.subtitle-word.visible {
+  opacity: 1;
+}
+

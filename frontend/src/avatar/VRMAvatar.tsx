@@ -116,28 +116,19 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
   }, [emotion, intensity, expressions, isTalking]);
 
   useEffect(() => {
-    if (controllerRef.current && animation) {
-      controllerRef.current.playAnimation(animation);
-    }
-  }, [animation]);
+    if (!controllerRef.current) return;
 
-  useEffect(() => {
-    if (controllerRef.current) {
-      controllerRef.current.setTalking(!!isTalking);
-      if (!isTalking && !isThinking) {
-        controllerRef.current.playAnimation('idle');
-      }
-    }
-  }, [isTalking, isThinking]);
+    controllerRef.current.setTalking(!!isTalking);
+    controllerRef.current.setThinking(!!isThinking);
 
-  useEffect(() => {
-    if (controllerRef.current) {
-      controllerRef.current.setThinking(!!isThinking);
-      if (isThinking) {
-        controllerRef.current.playAnimation('Thinking');
-      }
+    if (isThinking) {
+      controllerRef.current.playAnimation('Thinking', 2.65);
+    } else if (isTalking) {
+      controllerRef.current.playAnimation(animation || 'Talking');
+    } else {
+      controllerRef.current.playAnimation('idle');
     }
-  }, [isThinking]);
+  }, [isTalking, isThinking, animation]);
 
   const handleExpressionTest = (expr: string) => {
     if (!controllerRef.current) return;
@@ -181,18 +172,51 @@ export const VRMAvatar: React.FC<VRMAvatarProps> = ({ modelUrl, emotion, intensi
       
       {!loading && !error && expressions.length > 0 && (
          <div className={`vrm-dev-panel ${isDevPanelOpen ? 'open' : 'closed'}`}>
-            <div className="vrm-dev-content">
-              <h4>Test Expressions</h4>
-              <div className="vrm-dev-buttons">
-                {expressions.map(expr => (
-                   <button key={expr} onClick={() => handleExpressionTest(expr)}>
-                     {expr}
-                   </button>
-                ))}
-              </div>
-            </div>
             <div className="vrm-dev-toggle" onClick={() => setIsDevPanelOpen(!isDevPanelOpen)}>
-               <span>{isDevPanelOpen ? '◀' : '▶'} Dev</span>
+               <span>{isDevPanelOpen ? '✕' : '☰'}</span>
+            </div>
+            <div className="vrm-dev-content">
+              <div className="sidebar-section">
+                <h4>Settings</h4>
+                <div className="settings-placeholder">
+                  Configuration settings coming soon...
+                </div>
+              </div>
+              <div className="sidebar-section">
+                <h4>Animation Scrubber</h4>
+                <div style={{ padding: '0 8px' }}>
+                  <label style={{ fontSize: '0.8rem', color: '#aaa', display: 'block', marginBottom: '8px' }}>
+                    Find exact frame for 'Thinking'
+                  </label>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max={controllerRef.current?.getAnimationDuration('Thinking') || 5} 
+                    step="0.01" 
+                    defaultValue="0"
+                    onChange={(e) => {
+                      const time = parseFloat(e.target.value);
+                      controllerRef.current?.scrubAnimation('Thinking', time);
+                      const display = document.getElementById('scrub-time-display');
+                      if (display) display.innerText = time.toFixed(2) + 's';
+                    }} 
+                    style={{ width: '100%', cursor: 'pointer' }} 
+                  />
+                  <div style={{ fontSize: '0.75rem', color: '#fff', marginTop: '4px', textAlign: 'right' }} id="scrub-time-display">
+                    0.00s
+                  </div>
+                </div>
+              </div>
+              <div className="sidebar-section">
+                <h4>Test Expressions</h4>
+                <div className="vrm-dev-buttons">
+                  {expressions.map(expr => (
+                    <button key={expr} onClick={() => handleExpressionTest(expr)}>
+                      {expr}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
          </div>
       )}

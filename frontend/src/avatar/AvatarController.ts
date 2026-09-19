@@ -10,12 +10,13 @@ export class AvatarController {
   private controls: OrbitControls;
   private isInteracting: boolean = false;
   private interactionTimeout: number | null = null;
-  private defaultCameraPosition = new THREE.Vector3(0, 1.4, 1.2);
-  private defaultCameraTarget = new THREE.Vector3(0, 1.3, 0);
+  private defaultCameraPosition = new THREE.Vector3(0, 1.4, 1.4);
+  private defaultCameraTarget = new THREE.Vector3(0, 1.35, 0);
   private currentVrm: VRM | null = null;
   private mixer: THREE.AnimationMixer | null = null;
   private animations: Record<string, THREE.AnimationClip> = {};
   private currentAction: THREE.AnimationAction | null = null;
+  private targetClampTime: number | null = null;
   private clock: THREE.Clock;
   private animationFrameId: number | null = null;
   private blinkTimeout: number | null = null;
@@ -183,7 +184,7 @@ export class AvatarController {
     }
   }
 
-  public playAnimation(name: string): void {
+  public playAnimation(name: string, clampAtTime?: number): void {
     if (!this.mixer || !this.animations[name]) {
       if (name && name !== 'neutral') {
         console.log(`[AvatarController] Animation requested: ${name} (Not fully implemented yet or not loaded)`);
@@ -194,13 +195,49 @@ export class AvatarController {
     const clip = this.animations[name];
     const newAction = this.mixer.clipAction(clip);
     
+    newAction.reset();
+
+    // We don't use setDuration because that scales the entire animation to fit into the time!
+    // Instead we use our custom targetClampTime flag which the animate loop will respect.
+    if (clampAtTime !== undefined && clampAtTime > 0) {
+      this.targetClampTime = clampAtTime;
+      newAction.setLoop(THREE.LoopOnce, 1);
+      newAction.clampWhenFinished = true;
+    } else if (name === 'Thinking') {
+      this.targetClampTime = null;
+      newAction.setLoop(THREE.LoopOnce, 1);
+      newAction.clampWhenFinished = true;
+    } else {
+      this.targetClampTime = null;
+      newAction.setLoop(THREE.LoopRepeat, Infinity);
+      newAction.clampWhenFinished = false;
+    }
+    
     if (this.currentAction && this.currentAction !== newAction) {
        this.currentAction.crossFadeTo(newAction, 0.5, true);
-       this.currentAction.stop();
     }
     
     newAction.play();
     this.currentAction = newAction;
+  }
+
+  public getAnimationDuration(name: string): number {
+    return this.animations[name] ? this.animations[name].duration : 0;
+  }
+
+  public scrubAnimation(name: string, time: number): void {
+    if (!this.mixer || !this.animations[name]) return;
+    
+    this.mixer.stopAllAction();
+    const clip = this.animations[name];
+    const action = this.mixer.clipAction(clip);
+    action.play();
+    action.paused = true;
+    action.time = time;
+    this.currentAction = action;
+    
+    // Force mixer to evaluate at the exact time
+    this.mixer.update(0); 
   }
 
   public setTalking(talking: boolean): void {
@@ -277,6 +314,15 @@ export class AvatarController {
 
     if (this.currentVrm) {
       this.mixer?.update(delta);
+      
+      // Enforce the manual clamping
+      if (this.targetClampTime !== null && this.currentAction) {
+         if (this.currentAction.time >= this.targetClampTime) {
+            this.currentAction.paused = true;
+            this.currentAction.time = this.targetClampTime;
+         }
+      }
+
       const time = this.clock.getElapsedTime();
       
       if (this.currentVrm.humanoid) {
