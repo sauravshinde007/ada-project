@@ -1,4 +1,4 @@
-# Ada — Local AI VTuber Personal Assistant
+# Ada — Personal Assistant
 
 <img width="1280" height="640" alt="image" src="https://github.com/user-attachments/assets/2d9f501a-1b0e-4e53-8cc1-22fb8f8092a4" />
 
