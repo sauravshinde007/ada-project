@@ -7,7 +7,7 @@ import './App.css';
 function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
-  const [isChatOpen, setIsChatOpen] = useState(true);
+
   const [isTalking, setIsTalking] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [subtitleProgress, setSubtitleProgress] = useState(0);

@@ -4,12 +4,19 @@ import { WebSocketServer, WebSocket } from 'ws';
 import cors from 'cors';
 import { WebSocketMessage, WebSocketResponse, ChatMessage } from '../../shared/src/types/index.js';
 import { LlamaCppProvider } from './ai/providers/LlamaCppProvider.js';
-import { LLMMessage } from './ai/providers/LLMProvider.js';
+import { GroqProvider } from './ai/providers/GroqProvider.js';
+import { SearXNGProvider } from './ai/providers/SearXNGProvider.js';
+import { HybridLLMRouter } from './ai/providers/HybridLLMRouter.js';
+import { LLMMessage, LLMRequest } from './ai/providers/LLMProvider.js';
+import { SkillRegistry } from './ai/skills/SkillRegistry.js';
+import { WebSearchSkill } from './ai/skills/WebSearchSkill.js';
+import { LLMPlanner } from './ai/planner/LLMPlanner.js';
 import { ADA_SYSTEM_PROMPT } from './ai/prompts/SystemPrompt.js';
 import { validateStructuredResponse } from '../../shared/src/schemas/emotion.js';
 import { MemoryService } from './memory/MemoryService.js';
 import { MemoryManager } from './memory/MemoryManager.js';
 import { TTSService } from './tts/TTSService.js';
+import { TTSBuffer } from './tts/TTSBuffer.js';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -27,9 +34,19 @@ app.get('/api/health', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-const llmProvider = new LlamaCppProvider();
+const localLlmProvider = new LlamaCppProvider();
+const groqProvider = new GroqProvider();
+const searxngProvider = new SearXNGProvider();
+
+const skillRegistry = new SkillRegistry();
+const webSearchSkill = new WebSearchSkill(searxngProvider);
+skillRegistry.registerSkill(webSearchSkill);
+
+const planner = new LLMPlanner(localLlmProvider, skillRegistry);
+const llmProvider = new HybridLLMRouter(localLlmProvider, groqProvider, skillRegistry, planner);
+
 const memoryService = new MemoryService();
-const memoryManager = new MemoryManager(llmProvider, memoryService);
+const memoryManager = new MemoryManager(localLlmProvider, memoryService);
 const ttsService = new TTSService();
 
 wss.on('connection', (ws: WebSocket) => {
@@ -55,8 +72,18 @@ wss.on('connection', (ws: WebSocket) => {
       if (data.type === 'latency_log') {
         const t_playbackStart = data.payload.ts;
         console.log(`\n\n=== LATENCY REPORT ===`);
-        console.log(`1. Qwen request -> complete: ${t_qwenEnd - t_qwenStart}ms`);
-        console.log(`2. Qwen complete -> TTS start: ${t_ttsStart - t_qwenEnd}ms`);
+        const plannerLat = (llmProvider as HybridLLMRouter).lastPlannerLatency || 0;
+        const providerName = (llmProvider as HybridLLMRouter).lastUsedProvider || 'Qwen';
+        const searchLat = (llmProvider as HybridLLMRouter).lastSearchLatency || 0;
+
+        if (plannerLat > 0) {
+            console.log(`0a. Planner (Qwen) request -> complete: ${plannerLat}ms`);
+        }
+        if (searchLat > 0) {
+            console.log(`0b. SearXNG request -> complete: ${searchLat}ms`);
+        }
+        console.log(`1. Final LLM (${providerName}) request -> complete: ${t_qwenEnd - t_qwenStart}ms`);
+        console.log(`2. LLM complete -> TTS start: ${t_ttsStart - t_qwenEnd}ms`);
         console.log(`3. TTS start -> TTS complete: ${t_ttsEnd - t_ttsStart}ms`);
         console.log(`4. TTS complete -> Playback start: ${t_playbackStart - t_ttsEnd}ms`);
         console.log(`5. TOTAL (User req -> Playback): ${t_playbackStart - t_reqStart}ms`);
@@ -69,11 +96,21 @@ wss.on('connection', (ws: WebSocket) => {
         const userMsg = data.payload;
         console.log('Received message:', userMsg.text);
 
-        let relevantContext = await memoryManager.processExplicitCommands(userMsg.text);
-        let isExplicitCommand = !!relevantContext;
+        const plannerStart = Date.now();
+        const plan = await planner.plan(userMsg.text);
+        (llmProvider as HybridLLMRouter).lastPlannerLatency = Date.now() - plannerStart;
+        console.log('[Planner Decision]:', plan);
+        
+        let relevantContext: string | null = null;
+        let isExplicitCommand = false;
 
-        if (!relevantContext) {
-          relevantContext = memoryManager.getRelevantContext(userMsg.text);
+        if (plan.action === 'respond') {
+            relevantContext = await memoryManager.processExplicitCommands(userMsg.text);
+            isExplicitCommand = !!relevantContext;
+    
+            if (!relevantContext) {
+              relevantContext = memoryManager.getRelevantContext(userMsg.text);
+            }
         }
 
         const userContentWithContext = (relevantContext || '') + userMsg.text;
@@ -98,13 +135,20 @@ wss.on('connection', (ws: WebSocket) => {
           t_qwenStart = Date.now();
           
           let fullResponseText = '';
-          let currentTextBuffer = '';
+          let currentExtractedLength = 0;
           let ttsPromises: Promise<Buffer | null>[] = [];
           let firstTokenTime = 0;
           let firstAudioTime = 0;
+          let ttsCalls = 0;
+          const ttsBuffer = new TTSBuffer();
 
-          const req = { messages: generationMessages as LLMMessage[] };
-          for await (const chunk of llmProvider.generateStream(req)) {
+          const req: LLMRequest = { 
+            messages: generationMessages as LLMMessage[],
+            originalMessage: userMsg.text,
+            injectedContext: relevantContext || '',
+            plan: plan
+          };
+          for await (const chunk of llmProvider.generateStream!(req)) {
             if (!firstTokenTime) {
                 firstTokenTime = Date.now();
                 console.log(`[LATENCY] 1. First LLM token: ${firstTokenTime - t_reqStart}ms`);
@@ -114,24 +158,23 @@ wss.on('connection', (ws: WebSocket) => {
             const textMatch = fullResponseText.match(/"text"\s*:\s*"([^"]*)/);
             if (textMatch) {
                 const currentExtracted = textMatch[1];
-                const newText = currentExtracted.substring(currentTextBuffer.length);
+                const newText = currentExtracted.substring(currentExtractedLength);
                 if (newText) {
-                    const matches = newText.match(/[^.?!]+[.?!]+/g);
-                    if (matches) {
-                        for (const sentence of matches) {
-                            const trimmed = sentence.trim();
-                            if (trimmed) {
-                                const p = ttsService.generateAudioBuffer(trimmed, 'neutral', 0.5);
-                                if (ttsPromises.length === 0) {
-                                    p.then(() => {
-                                        firstAudioTime = Date.now();
-                                        console.log(`[LATENCY] 2. First TTS audio chunk ready: ${firstAudioTime - t_reqStart}ms`);
-                                    });
-                                }
-                                ttsPromises.push(p);
-                                currentTextBuffer += sentence;
-                            }
+                    currentExtractedLength = currentExtracted.length;
+                    
+                    const unescapedNewText = newText.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+                    const chunks = ttsBuffer.push(unescapedNewText);
+                    
+                    for (const chunk of chunks) {
+                        ttsCalls++;
+                        const p = ttsService.generateAudioBuffer(chunk, 'neutral', 0.5);
+                        if (ttsPromises.length === 0) {
+                            p.then(() => {
+                                firstAudioTime = Date.now();
+                                console.log(`[LATENCY] 2. First TTS audio chunk ready: ${firstAudioTime - t_reqStart}ms`);
+                            });
                         }
+                        ttsPromises.push(p);
                     }
                 }
             }
@@ -155,9 +198,9 @@ wss.on('connection', (ws: WebSocket) => {
              parsedResponse.animation = 'neutral';
           }
 
-          const finalExtractedText = typeof parsedResponse.text === 'string' ? parsedResponse.text : '';
-          const leftover = finalExtractedText.substring(currentTextBuffer.length).trim();
+          const leftover = ttsBuffer.flush();
           if (leftover) {
+              ttsCalls++;
               const p = ttsService.generateAudioBuffer(leftover, parsedResponse.emotion, parsedResponse.intensity);
               if (ttsPromises.length === 0) {
                   p.then(() => {
@@ -167,6 +210,7 @@ wss.on('connection', (ws: WebSocket) => {
               }
               ttsPromises.push(p);
           }
+          console.log(`[LATENCY] Total TTS synthesis calls: ${ttsCalls}`);
 
           conversation.push({ role: 'assistant', content: JSON.stringify(parsedResponse) });
           memoryService.saveConversationMessage(sessionId, 'assistant', JSON.stringify(parsedResponse));

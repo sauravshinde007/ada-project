@@ -5,7 +5,7 @@
 
 Ada is a local-first personal AI companion presented through an anime-style VRM avatar.
 
-The project combines a local language model, persistent memory, structured AI responses, personality, emotion-driven avatar behavior, and local text-to-speech into one interactive assistant. The browser provides the visual experience while the Node.js backend coordinates conversation, memory, AI providers, avatar state, and voice generation.
+The project combines a local language model, persistent memory, structured AI responses, personality, emotion-driven avatar behavior, local text-to-speech, and an LLM-driven skill system into one interactive assistant. The browser provides the visual experience while the Node.js backend coordinates conversation, memory, planning, skills, AI providers, avatar state, and voice generation.
 
 Ada is designed around modular provider interfaces so individual AI systems can be replaced without rewriting the application.
 
@@ -15,8 +15,8 @@ Ada is designed around modular provider interfaces so individual AI systems can 
 
 Ada is built around the following principles:
 
-- **Local-first:** the core AI stack runs locally without requiring paid hosted AI APIs.
-- **Modular:** LLM, memory, and TTS capabilities are isolated behind application interfaces.
+- **Local-first:** the core assistant and planner run locally; cloud AI is used only when a skill explicitly requires it.
+- **Modular:** LLM, planner, skills, memory, and TTS capabilities are isolated behind application interfaces.
 - **Interactive:** the assistant is represented by a VRM avatar rather than a text-only interface.
 - **Persistent:** conversational memory is stored locally with SQLite.
 - **Structured:** LLM responses contain validated application state such as text, emotion, intensity, and animation.
@@ -75,7 +75,53 @@ Connected Ada to a local language model.
 
 ---
 
-## Phase 4 — Personality
+## Phase 4 — LLM-Driven Skills / Hybrid AI
+
+Extended Ada from a hardcoded web-search router into an LLM-driven skill architecture.
+
+- Local Qwen3-4B acts as the planner.
+- The planner decides whether Ada should respond directly or invoke a registered skill.
+- Added a generic `Skill` interface and `SkillRegistry`.
+- Added `WebSearchSkill` as the first registered skill.
+- Added `LLMPlanner` for structured planning decisions.
+- SearXNG provides local web search.
+- Groq is used as the cloud response generator when `web_search` is selected.
+- Removed hardcoded web-search intent regexes from `HybridLLMRouter`.
+- Added safe fallback to local Qwen if the planner, SearXNG, or Groq fails.
+- Added strict privacy boundaries so SQLite memory and private conversation context are never sent to Groq for web-search requests.
+- Added planner/skill latency instrumentation.
+- The architecture is designed so future skills can be added through the registry without adding new routing regexes.
+
+Current flow:
+
+```text
+User Message
+     │
+     ▼
+Local Qwen Planner
+     │
+     ├── respond ───────────────► Local Qwen
+     │
+     └── skill: web_search
+                │
+                ▼
+             SearXNG
+                │
+                ▼
+               Groq
+                │
+                ▼
+         Structured Response
+                │
+                ▼
+        Emotion / TTS / Avatar
+```
+
+For web-search requests, the cloud model receives only the user query and search results required to answer the request. Local SQLite memory is not transmitted.
+
+---
+
+## Phase 5 — Personality
 
 Turned the language model into the Ada character.
 
@@ -90,7 +136,7 @@ Ada's personality is treated as application configuration instead of being scatt
 
 ---
 
-## Phase 5 — Emotion System
+## Phase 6 — Emotion System
 
 Connected structured AI output to the avatar.
 
@@ -122,7 +168,7 @@ The backend treats emotion as application-level state, while the frontend maps t
 
 ---
 
-## Phase 6 — Persistent Memory
+## Phase 7 — Persistent Memory
 
 Added persistent conversational memory.
 
@@ -136,7 +182,7 @@ The memory system remains local and does not require a hosted database.
 
 ---
 
-## Phase 7 — Voice / TTS
+## Phase 8 — Voice / TTS
 
 Added local voice synthesis using GPT-SoVITS v2Pro.
 
@@ -206,7 +252,7 @@ CPU inference keeps GPT-SoVITS from competing with the local llama.cpp model for
 
 ---
 
-## Phase 8 — Real-Time Conversation
+## Phase 9 — Real-Time Conversation
 
 Extended Ada toward real-time conversational interaction.
 
@@ -218,7 +264,7 @@ Extended Ada toward real-time conversational interaction.
 
 ---
 
-## Phase 9 — Tools / Agent
+## Phase 10 — Tools / Agent
 
 Established a controlled tool and agent architecture.
 
@@ -235,7 +281,7 @@ Unrestricted shell access is not part of the default assistant architecture.
 
 ---
 
-## Phase 10 — Proactive Behavior
+## Phase 11 — Proactive Behavior
 
 Extended Ada beyond purely reactive conversations.
 
@@ -251,7 +297,7 @@ Proactive actions are controlled by explicit application rules rather than unres
 
 ---
 
-## Phase 11 — Vision
+## Phase 12 — Vision
 
 Extended Ada toward multimodal interaction.
 
@@ -267,7 +313,7 @@ Vision capabilities remain isolated behind provider interfaces so they do not af
 
 ---
 
-## Phase 12 — Polish
+## Phase 13 — Polish
 
 Finalized the user experience and system reliability.
 
@@ -306,14 +352,18 @@ flowchart TB
         CONV["Conversation Orchestrator"]
         MEMORY["Memory Manager"]
         STRUCT["Structured Response Validation"]
+        PLANNER["LLMPlanner"]
+        SKILLS["Skill Registry"]
         LLM_PROVIDER["LLMProvider"]
         TTS["TTSService"]
         PRE["TTSPreprocessor"]
         TTS_PROVIDER["TTSProvider"]
     end
 
-    subgraph AI["Local AI Services"]
+    subgraph AI["AI Services"]
         LLAMA["llama.cpp<br/>Qwen3-4B Q4_K_M<br/>:8080"]
+        SEARX["SearXNG<br/>:8888"]
+        GROQ["Groq<br/>Cloud LLM"]
         GPT["GPT-SoVITS v2Pro<br/>:9880"]
     end
 
@@ -328,7 +378,16 @@ flowchart TB
     CONV --> MEMORY
     MEMORY <--> SQLITE
 
-    CONV --> LLM_PROVIDER
+    CONV --> PLANNER
+    PLANNER --> LLAMA
+    LLAMA --> PLANNER
+
+    PLANNER --> SKILLS
+    SKILLS --> SEARX
+    SEARX --> SKILLS
+    SKILLS --> LLM_PROVIDER
+    LLM_PROVIDER --> GROQ
+    GROQ --> LLM_PROVIDER
     LLM_PROVIDER --> LLAMA
     LLAMA --> LLM_PROVIDER
 
@@ -373,20 +432,37 @@ flowchart TB
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │              Conversation Orchestrator                │  │
-│  └───────┬──────────────────┬───────────────────┬────────┘  │
-│          │                  │                   │             │
-│          ▼                  ▼                   ▼             │
-│   ┌─────────────┐    ┌─────────────┐    ┌──────────────┐    │
-│   │   Memory    │    │ LLMProvider │    │  TTSService  │    │
-│   └──────┬──────┘    └──────┬──────┘    └──────┬───────┘    │
-│          │                   │                  │             │
-└──────────┼───────────────────┼──────────────────┼─────────────┘
-           │                   │                  │
-           ▼                   ▼                  ▼
-     ┌───────────┐       ┌────────────┐    ┌──────────────┐
-     │  SQLite   │       │ llama.cpp  │    │ GPT-SoVITS   │
-     │  Memory   │       │   :8080    │    │ v2Pro :9880  │
-     └───────────┘       └────────────┘    └──────────────┘
+│  └───────┬──────────────┬───────────────┬────────────────┘  │
+│          │              │               │                    │
+│          ▼              ▼               ▼                    │
+│   ┌─────────────┐ ┌──────────────┐ ┌──────────────┐         │
+│   │   Memory    │ │ LLM Planner  │ │  TTSService  │         │
+│   └──────┬──────┘ └──────┬───────┘ └──────┬───────┘         │
+│          │               │                │                  │
+└──────────┼───────────────┼────────────────┼──────────────────┘
+           │               │                │
+           ▼               ▼                ▼
+     ┌───────────┐   ┌────────────┐   ┌──────────────┐
+     │  SQLite   │   │ llama.cpp  │   │ GPT-SoVITS   │
+     │  Memory   │   │   :8080    │   │ v2Pro :9880  │
+     └───────────┘   └─────┬──────┘   └──────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │Skill Registry│
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │  SearXNG    │
+                    │   :8888     │
+                    └──────┬──────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │    Groq     │
+                    │ Cloud LLM   │
+                    └─────────────┘
 ```
 
 ## Service Map
@@ -395,7 +471,9 @@ flowchart TB
 |---|---|---|
 | Ada frontend | Vite-configured port | Browser application |
 | Ada backend | `127.0.0.1:3001` | Conversation, WebSocket, and API |
-| llama.cpp | `127.0.0.1:8080` | Local LLM inference |
+| llama.cpp | `127.0.0.1:8080` | Local Qwen inference and planning |
+| SearXNG | `127.0.0.1:8888` | Local web-search skill |
+| Groq | Cloud API | Cloud response generation for web-search skill |
 | GPT-SoVITS Main WebUI | `127.0.0.1:9874` | GPT-SoVITS main interface |
 | GPT-SoVITS TTS UI | `127.0.0.1:9872` | TTS inference interface |
 | GPT-SoVITS API | `127.0.0.1:9880` | Ada TTS provider endpoint |
@@ -420,6 +498,8 @@ ada-project/
 ├── backend/
 │   └── src/
 │       ├── ai/
+│       │   ├── planner/
+│       │   ├── skills/
 │       │   ├── providers/
 │       │   └── prompts/
 │       ├── memory/
@@ -461,9 +541,53 @@ The documented environment uses:
 - llama.cpp
 - GPT-SoVITS v2Pro
 - SQLite
+- SearXNG
+- Valkey (used by the local SearXNG installation)
 - `ffmpeg` / `ffplay` for optional audio testing
 
-The core AI stack is local-first and does not require paid AI APIs.
+The core assistant and planner are local-first. Groq is used only when the `web_search` skill is selected, and therefore requires a Groq API key. SearXNG remains self-hosted and local.
+
+---
+
+# Hybrid AI Configuration
+
+Ada's current hybrid AI stack uses a local planner and a registered web-search skill.
+
+Create/update the backend environment file with:
+
+```env
+GROQ_API_KEY="your-groq-api-key"
+GROQ_MODEL="openai/gpt-oss-20b"
+SEARXNG_URL="http://127.0.0.1:8888"
+```
+
+The local SearXNG instance is expected to expose its JSON API on:
+
+```text
+http://127.0.0.1:8888/search?q=<query>&format=json
+```
+
+Web-search requests follow:
+
+```text
+Local Qwen Planner
+        ↓
+WebSearchSkill
+        ↓
+SearXNG
+        ↓
+Groq
+```
+
+Normal requests stay local:
+
+```text
+Local Qwen Planner
+        ↓
+Local Qwen
+```
+
+For web-search requests, SQLite memory and private conversation context are not sent to Groq.
 
 ---
 
@@ -476,8 +600,9 @@ The normal runtime consists of:
 ```text
 Terminal 1 → llama.cpp
 Terminal 2 → GPT-SoVITS API
-Terminal 3 → Ada backend
-Terminal 4 → Ada frontend
+Terminal 3 → SearXNG
+Terminal 4 → Ada backend
+Terminal 5 → Ada frontend
 ```
 
 The GPT-SoVITS WebUI is optional and is only needed when manually testing or changing voice/reference settings.
@@ -667,7 +792,7 @@ For future use, the normal startup is:
 cd ~/SauravSan/Coding/ada-project/llama.cpp
 
 ./build/bin/llama-server \
-  -m ../ai-models/qwen3-4b-q4_k_m.gguf \
+  -m ../ai-models/Qwen3-4B-Q4_K_M.gguf \
   -c 4096 \
   -ngl 99 \
   --port 8080
@@ -738,6 +863,47 @@ Play the generated file with:
 
 ```bash
 ffplay ada-test.wav
+```
+
+---
+
+# Development / Validation
+
+After changing the planner, skills, providers, or backend orchestration, run:
+
+```bash
+cd ~/SauravSan/Coding/ada-project/backend
+npm run build
+npx vitest run --dir src
+```
+
+The planner/skill architecture currently includes tests covering:
+
+- Skill registration and lookup.
+- Web-search skill execution.
+- LLM planner decisions.
+- Planner failure fallback.
+- Web-search/SearXNG failure fallback.
+- Groq failure fallback.
+- Web-search privacy boundary.
+
+Useful runtime checks:
+
+```bash
+curl http://127.0.0.1:8080/v1/models
+curl http://127.0.0.1:3001/api/health
+curl -s "http://127.0.0.1:8888/search?q=Fedora+Linux&format=json"
+ss -ltnp | grep -E '3001|8080|8888|9872|9874|9880'
+```
+
+During development, the backend latency report can show:
+
+```text
+Planner (Qwen)
+SearXNG
+Final LLM (Qwen/Groq)
+TTS
+Total
 ```
 
 ---
@@ -841,6 +1007,38 @@ nvidia-smi
 
 ---
 
+## SearXNG is not responding
+
+Check whether the local SearXNG endpoint is listening:
+
+```bash
+ss -ltnp | grep 8888
+```
+
+Test the JSON API:
+
+```bash
+curl -s "http://127.0.0.1:8888/search?q=Fedora+Linux&format=json"
+```
+
+If the endpoint is unavailable, check the native SearXNG/uWSGI service and its configuration under:
+
+```text
+/etc/searxng/settings.yml
+/etc/uwsgi.d/searxng.ini
+```
+
+SearXNG should expose HTTP on `127.0.0.1:8888` and have JSON enabled under:
+
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+---
+
 ## Ada backend is not responding
 
 Check whether the backend is running:
@@ -882,7 +1080,7 @@ If Vite starts successfully, use the URL printed in the terminal.
 Check all expected local services:
 
 ```bash
-ss -ltnp | grep -E '3001|8080|9872|9874|9880'
+ss -ltnp | grep -E '3001|8080|8888|9872|9874|9880'
 ```
 
 Expected services:
@@ -890,6 +1088,7 @@ Expected services:
 ```text
 3001 → Ada backend
 8080 → llama.cpp
+8888 → SearXNG
 9872 → GPT-SoVITS TTS UI
 9874 → GPT-SoVITS Main WebUI
 9880 → GPT-SoVITS API
@@ -929,10 +1128,40 @@ in each terminal to stop:
 
 1. Ada frontend
 2. Ada backend
-3. GPT-SoVITS API
-4. llama.cpp
+3. SearXNG
+4. GPT-SoVITS API
+5. llama.cpp
 
 The GPT-SoVITS WebUI can also be stopped with `Ctrl+C` if it was started.
+
+---
+
+# Current AI Architecture Notes
+
+Ada now separates **planning**, **skill execution**, and **response generation**.
+
+- `LLMPlanner` uses local Qwen to decide whether to respond directly or invoke a registered skill.
+- `SkillRegistry` contains the available skills.
+- `WebSearchSkill` is currently the first skill and uses local SearXNG.
+- Groq is used as the final response generator only after a web-search skill is executed.
+- `HybridLLMRouter` orchestrates the planned action rather than maintaining hardcoded intent regexes.
+- Direct conversational requests remain on local Qwen.
+- Web-search requests bypass SQLite memory retrieval and private context before the Groq call.
+- Future capabilities should preferably be added as skills rather than as new intent-detection regexes.
+
+Current skill architecture:
+
+```text
+LLMPlanner
+    │
+    ▼
+SkillRegistry
+    │
+    ├── web_search
+    └── future skills...
+```
+
+The TTS subsystem remains separate from the planner/skill architecture.
 
 ---
 

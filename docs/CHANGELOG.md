@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hybrid AI Architecture & LLM Skill Planner**
+  - **Refactored Web Search into LLM Skill Planner Architecture**: Replaced hardcoded regex intent detection with a local Qwen LLM-driven planner (`LLMPlanner`).
+  - **Skill & Tool Abstraction**: Introduced `Skill` interface, `SkillRegistry`, and modular `WebSearchSkill` wrapping `SearXNGProvider`.
+  - **LLM-Driven Planning**: Local Qwen model inspects user messages and available skill descriptions, outputting a structured planning decision (`{"action": "respond"}` vs `{"action": "skill", "skill": "web_search", "input": {...}}`).
+  - **Privacy Boundary Preservation**: Web search requests (`web_search` -> SearXNG -> Groq) bypass SQLite memory retrieval. Groq receives strictly minimal system instructions, search results, and original user query. Private conversation history and `injectedContext` are never transmitted.
+  - **Graceful Fallbacks**: Any planner, SearXNG, or Groq failure gracefully falls back to local Qwen direct response.
+  - **Dynamic Latency Instrumentation**: Updated latency report to track `Planner (Qwen)`, `SearXNG`, `Final LLM (Qwen/Groq)`, `TTS`, and `TOTAL` timing.
+
+- **TTS Streaming Optimization**
+  - Introduced `TTSBuffer` to correctly segment streamed LLM text into natural sentences.
+  - Avoids premature synthesis on decimals (e.g., `2026.03`), dates, or common abbreviations.
+  - Drastically reduces the number of generated GPT-SoVITS chunks, lowering latency and improving speech naturalness while preserving token-by-token frontend UI streaming.
+  - Preserved the existing structured response format and LLM routing behavior.
+  - Added `.env.example` configurations for `GROQ_API_KEY` and `SEARXNG_URL`.
+
+
 - **Phase 7A: Backend TTS Integration**
   - Added `TTSProvider`, `GPTSoVITSProvider`, `TTSPreprocessor`, and `TTSService`.
   - Connected structured LLM responses to the TTS pipeline without coupling conversation logic directly to GPT-SoVITS.

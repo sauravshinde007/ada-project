@@ -17,15 +17,16 @@ export const Subtitles: React.FC<SubtitlesProps> = ({ text, progress }) => {
     <div className="subtitle-container">
       <p className="subtitle-text">
         {words.map((word, index) => (
-          <span
-            key={index}
-            className={`subtitle-word ${index < wordsToShow ? 'visible' : 'hidden'}`}
-          >
-            {word}{' '}
-          </span>
+          <React.Fragment key={index}>
+            <span
+              className={`subtitle-word ${index < wordsToShow ? 'visible' : 'hidden'}`}
+            >
+              {word}
+            </span>
+            {index < words.length - 1 ? ' ' : ''}
+          </React.Fragment>
         ))}
       </p>
     </div>
   );
 };
-
